@@ -10,67 +10,114 @@ const SUPABASE_KEY = process.env.SUPABASE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6Ik
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
-app.use(cors());
-app.use(express.json());
+// CORS Configuration - Mejorado para TV LG
+app.use(cors({
+    origin: '*',
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+    credentials: true,
+    maxAge: 86400 // 24 horas
+}));
 
-app.get('/api/health', (req, res) => {
-    res.json({ success: true, message: 'OK' });
+// Headers adicionales para compatibilidad con TV
+app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+    res.header('Access-Control-Max-Age', '86400');
+    
+    // Responder a preflight requests
+    if (req.method === 'OPTIONS') {
+        return res.sendStatus(200);
+    }
+    next();
 });
 
+app.use(express.json());
+
+// Logging middleware para debug
+app.use((req, res, next) => {
+    console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
+    next();
+});
+
+// Health check
+app.get('/api/health', (req, res) => {
+    res.json({ success: true, message: 'OK', timestamp: new Date().toISOString() });
+});
+
+// Get recommendations
 app.get('/api/movies/recommendations', async (req, res) => {
     try {
         const { data, error } = await supabase
             .from('movies')
-            .select('id, title, backdrop_path, popularity')
+            .select('id, title, backdrop_path, backdrop_path, popularity')
             .order('popularity', { ascending: false })
             .limit(5);
+        
         if (error) throw error;
         res.json({ success: true, data });
     } catch (error) {
+        console.error('Error in /api/movies/recommendations:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
 
+// Get popular movies
 app.get('/api/movies/popular', async (req, res) => {
     try {
         const limit = parseInt(req.query.limit) || 10;
         const offset = parseInt(req.query.offset) || 5;
+        
         const { data, error } = await supabase
             .from('movies')
-            .select('id, title, backdrop_path, popularity')
+            .select('id, title, backdrop_path, backdrop_path, popularity')
             .order('popularity', { ascending: false })
             .range(offset, offset + limit - 1);
+        
         if (error) throw error;
         res.json({ success: true, data });
     } catch (error) {
+        console.error('Error in /api/movies/popular:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
 
+// Get genres
 app.get('/api/genres', async (req, res) => {
     try {
         const { data, error } = await supabase
             .from('genres')
             .select('id, name')
             .order('name', { ascending: true });
+        
         if (error) throw error;
         res.json({ success: true, data });
     } catch (error) {
+        console.error('Error in /api/genres:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
 
+// Get movies by genre
 app.get('/api/genres/:id/movies', async (req, res) => {
     try {
         const { data, error } = await supabase
             .from('movie_genres')
-            .select('movie_id, movies(id, title, backdrop_path, popularity)')
+            .select('movie_id, movies(id, title, backdrop_path, backdrop_path, popularity)')
             .eq('genre_id', req.params.id)
             .limit(20);
+        
         if (error) throw error;
-        const movies = data.map(item => item.movies).sort((a, b) => b.popularity - a.popularity);
+        
+        const movies = data
+            .map(item => item.movies)
+            .filter(movie => movie !== null)
+            .sort((a, b) => b.popularity - a.popularity);
+        
         res.json({ success: true, data: movies });
     } catch (error) {
+        console.error('Error in /api/genres/:id/movies:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
@@ -83,9 +130,20 @@ app.get('/api/movies/:id', async (req, res) => {
             .select('*')
             .eq('id', req.params.id)
             .single();
-        if (error) throw error;
+        
+        if (error) {
+            if (error.code === 'PGRST116') {
+                return res.status(404).json({ 
+                    success: false, 
+                    error: 'Película no encontrada' 
+                });
+            }
+            throw error;
+        }
+        
         res.json({ success: true, data });
     } catch (error) {
+        console.error('Error in /api/movies/:id:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
@@ -94,8 +152,12 @@ app.get('/api/movies/:id', async (req, res) => {
 app.get('/api/movies/:id/user-rating', async (req, res) => {
     try {
         const userId = req.query.userId;
+        
         if (!userId) {
-            return res.status(400).json({ success: false, error: 'userId is required' });
+            return res.status(400).json({ 
+                success: false, 
+                error: 'userId is required' 
+            });
         }
 
         const { data, error } = await supabase
@@ -113,6 +175,7 @@ app.get('/api/movies/:id/user-rating', async (req, res) => {
         if (error) throw error;
         res.json({ success: true, data });
     } catch (error) {
+        console.error('Error in /api/movies/:id/user-rating:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
@@ -135,21 +198,24 @@ app.get('/api/movies/:id/friends-ratings', async (req, res) => {
                 )
             `)
             .eq('movie_id', req.params.id)
-            .neq('user_id', userId) // Exclude current user
+            .neq('user_id', userId || 'no-user') // Exclude current user
             .not('rating', 'is', null); // Only users who have rated
         
         if (error) throw error;
         
         // Transform data to flatten structure
-        const friendsRatings = data.map(item => ({
-            rating: item.rating,
-            watched: item.watched,
-            name: item.users.name,
-            avatar_url: item.users.avatar_url
-        }));
+        const friendsRatings = data
+            .filter(item => item.users !== null)
+            .map(item => ({
+                rating: item.rating,
+                watched: item.watched,
+                name: item.users.name,
+                avatar_url: item.users.avatar_url
+            }));
         
         res.json({ success: true, data: friendsRatings });
     } catch (error) {
+        console.error('Error in /api/movies/:id/friends-ratings:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
@@ -160,11 +226,17 @@ app.post('/api/movies/:id/rate', async (req, res) => {
         const { userId, rating } = req.body;
         
         if (!userId || !rating) {
-            return res.status(400).json({ success: false, error: 'userId and rating are required' });
+            return res.status(400).json({ 
+                success: false, 
+                error: 'userId and rating are required' 
+            });
         }
         
         if (rating < 1 || rating > 10) {
-            return res.status(400).json({ success: false, error: 'Rating must be between 1 and 10' });
+            return res.status(400).json({ 
+                success: false, 
+                error: 'Rating must be between 1 and 10' 
+            });
         }
         
         // Upsert (insert or update)
@@ -172,7 +244,7 @@ app.post('/api/movies/:id/rate', async (req, res) => {
             .from('user_movie_ratings')
             .upsert({
                 user_id: userId,
-                movie_id: req.params.id,
+                movie_id: parseInt(req.params.id),
                 rating: rating,
                 updated_at: new Date().toISOString()
             }, {
@@ -184,6 +256,7 @@ app.post('/api/movies/:id/rate', async (req, res) => {
         if (error) throw error;
         res.json({ success: true, data });
     } catch (error) {
+        console.error('Error in /api/movies/:id/rate:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
@@ -194,12 +267,15 @@ app.post('/api/movies/:id/watched', async (req, res) => {
         const { userId, watched } = req.body;
         
         if (!userId || watched === undefined) {
-            return res.status(400).json({ success: false, error: 'userId and watched are required' });
+            return res.status(400).json({ 
+                success: false, 
+                error: 'userId and watched are required' 
+            });
         }
         
         const updateData = {
             user_id: userId,
-            movie_id: req.params.id,
+            movie_id: parseInt(req.params.id),
             watched: watched,
             updated_at: new Date().toISOString()
         };
@@ -207,6 +283,8 @@ app.post('/api/movies/:id/watched', async (req, res) => {
         // Add watched_date if marking as watched
         if (watched) {
             updateData.watched_date = new Date().toISOString();
+        } else {
+            updateData.watched_date = null;
         }
         
         // Upsert
@@ -221,10 +299,31 @@ app.post('/api/movies/:id/watched', async (req, res) => {
         if (error) throw error;
         res.json({ success: true, data });
     } catch (error) {
+        console.error('Error in /api/movies/:id/watched:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
 
+// 404 handler
+app.use((req, res) => {
+    res.status(404).json({ 
+        success: false, 
+        error: 'Endpoint not found',
+        path: req.path
+    });
+});
+
+// Error handler
+app.use((err, req, res, next) => {
+    console.error('Unhandled error:', err);
+    res.status(500).json({ 
+        success: false, 
+        error: 'Internal server error',
+        message: err.message
+    });
+});
+
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
+    console.log(`Health check: http://localhost:${PORT}/api/health`);
 });
