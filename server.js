@@ -75,7 +75,156 @@ app.get('/api/genres/:id/movies', async (req, res) => {
     }
 });
 
+// Get movie detail by ID
+app.get('/api/movies/:id', async (req, res) => {
+    try {
+        const { data, error } = await supabase
+            .from('movies')
+            .select('*')
+            .eq('id', req.params.id)
+            .single();
+        if (error) throw error;
+        res.json({ success: true, data });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Get user rating for a movie
+app.get('/api/movies/:id/user-rating', async (req, res) => {
+    try {
+        const userId = req.query.userId;
+        if (!userId) {
+            return res.status(400).json({ success: false, error: 'userId is required' });
+        }
+
+        const { data, error } = await supabase
+            .from('user_movie_ratings')
+            .select('*')
+            .eq('movie_id', req.params.id)
+            .eq('user_id', userId)
+            .single();
+        
+        // If no rating exists, return null (not an error)
+        if (error && error.code === 'PGRST116') {
+            return res.json({ success: true, data: null });
+        }
+        
+        if (error) throw error;
+        res.json({ success: true, data });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Get friends ratings for a movie
+app.get('/api/movies/:id/friends-ratings', async (req, res) => {
+    try {
+        const userId = req.query.userId;
+        
+        const { data, error } = await supabase
+            .from('user_movie_ratings')
+            .select(`
+                rating,
+                watched,
+                user_id,
+                users (
+                    id,
+                    name,
+                    avatar_url
+                )
+            `)
+            .eq('movie_id', req.params.id)
+            .neq('user_id', userId) // Exclude current user
+            .not('rating', 'is', null); // Only users who have rated
+        
+        if (error) throw error;
+        
+        // Transform data to flatten structure
+        const friendsRatings = data.map(item => ({
+            rating: item.rating,
+            watched: item.watched,
+            name: item.users.name,
+            avatar_url: item.users.avatar_url
+        }));
+        
+        res.json({ success: true, data: friendsRatings });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Rate a movie
+app.post('/api/movies/:id/rate', async (req, res) => {
+    try {
+        const { userId, rating } = req.body;
+        
+        if (!userId || !rating) {
+            return res.status(400).json({ success: false, error: 'userId and rating are required' });
+        }
+        
+        if (rating < 1 || rating > 10) {
+            return res.status(400).json({ success: false, error: 'Rating must be between 1 and 10' });
+        }
+        
+        // Upsert (insert or update)
+        const { data, error } = await supabase
+            .from('user_movie_ratings')
+            .upsert({
+                user_id: userId,
+                movie_id: req.params.id,
+                rating: rating,
+                updated_at: new Date().toISOString()
+            }, {
+                onConflict: 'user_id,movie_id'
+            })
+            .select()
+            .single();
+        
+        if (error) throw error;
+        res.json({ success: true, data });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Mark movie as watched/unwatched
+app.post('/api/movies/:id/watched', async (req, res) => {
+    try {
+        const { userId, watched } = req.body;
+        
+        if (!userId || watched === undefined) {
+            return res.status(400).json({ success: false, error: 'userId and watched are required' });
+        }
+        
+        const updateData = {
+            user_id: userId,
+            movie_id: req.params.id,
+            watched: watched,
+            updated_at: new Date().toISOString()
+        };
+        
+        // Add watched_date if marking as watched
+        if (watched) {
+            updateData.watched_date = new Date().toISOString();
+        }
+        
+        // Upsert
+        const { data, error } = await supabase
+            .from('user_movie_ratings')
+            .upsert(updateData, {
+                onConflict: 'user_id,movie_id'
+            })
+            .select()
+            .single();
+        
+        if (error) throw error;
+        res.json({ success: true, data });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
-
 });
