@@ -21,7 +21,7 @@ app.get('/api/movies/recommendations', async (req, res) => {
     try {
         const { data, error } = await supabase
             .from('movies')
-            .select('id, title, poster_path, popularity')
+            .select('id, title, backdrop_path, popularity')
             .order('popularity', { ascending: false })
             .limit(5);
         if (error) throw error;
@@ -37,7 +37,7 @@ app.get('/api/movies/popular', async (req, res) => {
         const offset = parseInt(req.query.offset) || 5;
         const { data, error } = await supabase
             .from('movies')
-            .select('id, title, poster_path, popularity')
+            .select('id, title, backdrop_path, popularity')
             .order('popularity', { ascending: false })
             .range(offset, offset + limit - 1);
         if (error) throw error;
@@ -64,7 +64,7 @@ app.get('/api/genres/:id/movies', async (req, res) => {
     try {
         const { data, error } = await supabase
             .from('movie_genres')
-            .select('movie_id, movies(id, title, poster_path, popularity)')
+            .select('movie_id, movies(id, title, backdrop_path, popularity)')
             .eq('genre_id', req.params.id)
             .limit(20);
         if (error) throw error;
@@ -77,4 +77,5 @@ app.get('/api/genres/:id/movies', async (req, res) => {
 
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
+
 });
