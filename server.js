@@ -46,28 +46,12 @@ app.get('/api/health', (req, res) => {
     res.json({ success: true, message: 'OK', timestamp: new Date().toISOString() });
 });
 
-// Get all streaming providers
-app.get('/api/streaming-providers', async (req, res) => {
-    try {
-        const { data, error } = await supabase
-            .from('streaming_providers')
-            .select('*')
-            .order('display_priority', { ascending: true });
-        
-        if (error) throw error;
-        res.json({ success: true, data });
-    } catch (error) {
-        console.error('Error in /api/streaming-providers:', error);
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
 // Get recommendations
 app.get('/api/movies/recommendations', async (req, res) => {
     try {
         const { data, error } = await supabase
             .from('movies')
-            .select('id, title, backdrop_path, poster_path, popularity')
+            .select('id, title, backdrop_path, backdrop_path, popularity')
             .order('popularity', { ascending: false })
             .limit(5);
         
@@ -87,7 +71,7 @@ app.get('/api/movies/popular', async (req, res) => {
         
         const { data, error } = await supabase
             .from('movies')
-            .select('id, title, backdrop_path, poster_path, popularity')
+            .select('id, title, backdrop_path, backdrop_path, popularity')
             .order('popularity', { ascending: false })
             .range(offset, offset + limit - 1);
         
@@ -120,7 +104,7 @@ app.get('/api/genres/:id/movies', async (req, res) => {
     try {
         const { data, error } = await supabase
             .from('movie_genres')
-            .select('movie_id, movies(id, title, backdrop_path, poster_path, popularity)')
+            .select('movie_id, movies(id, title, backdrop_path, backdrop_path, popularity)')
             .eq('genre_id', req.params.id)
             .limit(20);
         
@@ -138,141 +122,28 @@ app.get('/api/genres/:id/movies', async (req, res) => {
     }
 });
 
-// Get movies by streaming provider
-app.get('/api/streaming-providers/:id/movies', async (req, res) => {
-    try {
-        const limit = parseInt(req.query.limit) || 20;
-        const type = req.query.type || 'flatrate'; // flatrate, rent, buy
-        
-        const { data, error } = await supabase
-            .from('movie_streaming')
-            .select(`
-                movie_id,
-                type,
-                movies (
-                    id,
-                    title,
-                    backdrop_path,
-                    poster_path,
-                    popularity,
-                    vote_average
-                )
-            `)
-            .eq('provider_id', req.params.id)
-            .eq('type', type)
-            .limit(limit);
-        
-        if (error) throw error;
-        
-        const movies = data
-            .map(item => item.movies)
-            .filter(movie => movie !== null)
-            .sort((a, b) => b.popularity - a.popularity);
-        
-        res.json({ success: true, data: movies });
-    } catch (error) {
-        console.error('Error in /api/streaming-providers/:id/movies:', error);
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-// Get movie detail by ID (with streaming providers)
+// Get movie detail by ID
 app.get('/api/movies/:id', async (req, res) => {
     try {
-        // Get movie details
-        const { data: movie, error: movieError } = await supabase
+        const { data, error } = await supabase
             .from('movies')
             .select('*')
             .eq('id', req.params.id)
             .single();
         
-        if (movieError) {
-            if (movieError.code === 'PGRST116') {
+        if (error) {
+            if (error.code === 'PGRST116') {
                 return res.status(404).json({ 
                     success: false, 
                     error: 'Película no encontrada' 
                 });
             }
-            throw movieError;
+            throw error;
         }
         
-        // Get streaming providers for this movie
-        const { data: streamingData, error: streamingError } = await supabase
-            .from('movie_streaming')
-            .select(`
-                type,
-                streaming_providers (
-                    id,
-                    name,
-                    logo_path
-                )
-            `)
-            .eq('movie_id', req.params.id);
-        
-        if (streamingError) throw streamingError;
-        
-        // Organize streaming data by type
-        const streaming = {
-            flatrate: [],
-            rent: [],
-            buy: []
-        };
-        
-        streamingData.forEach(item => {
-            if (item.streaming_providers) {
-                streaming[item.type].push(item.streaming_providers);
-            }
-        });
-        
-        // Add streaming info to movie object
-        movie.streaming_providers = streaming;
-        
-        res.json({ success: true, data: movie });
+        res.json({ success: true, data });
     } catch (error) {
         console.error('Error in /api/movies/:id:', error);
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-// Get streaming providers for a specific movie
-app.get('/api/movies/:id/streaming-providers', async (req, res) => {
-    try {
-        const { data, error } = await supabase
-            .from('movie_streaming')
-            .select(`
-                type,
-                streaming_providers (
-                    id,
-                    name,
-                    logo_path,
-                    display_priority
-                )
-            `)
-            .eq('movie_id', req.params.id);
-        
-        if (error) throw error;
-        
-        // Organize by type
-        const result = {
-            flatrate: [],
-            rent: [],
-            buy: []
-        };
-        
-        data.forEach(item => {
-            if (item.streaming_providers) {
-                result[item.type].push(item.streaming_providers);
-            }
-        });
-        
-        // Sort by display_priority
-        Object.keys(result).forEach(type => {
-            result[type].sort((a, b) => a.display_priority - b.display_priority);
-        });
-        
-        res.json({ success: true, data: result });
-    } catch (error) {
-        console.error('Error in /api/movies/:id/streaming-providers:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
