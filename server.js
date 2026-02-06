@@ -26,7 +26,6 @@ app.use((req, res, next) => {
     res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
     res.header('Access-Control-Max-Age', '86400');
     
-    // Responder a preflight requests
     if (req.method === 'OPTIONS') {
         return res.sendStatus(200);
     }
@@ -46,28 +45,12 @@ app.get('/api/health', (req, res) => {
     res.json({ success: true, message: 'OK', timestamp: new Date().toISOString() });
 });
 
-// Get all streaming providers
-app.get('/api/streaming-providers', async (req, res) => {
-    try {
-        const { data, error } = await supabase
-            .from('streaming_providers')
-            .select('*')
-            .order('display_priority', { ascending: true });
-        
-        if (error) throw error;
-        res.json({ success: true, data });
-    } catch (error) {
-        console.error('Error in /api/streaming-providers:', error);
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
 // Get recommendations
 app.get('/api/movies/recommendations', async (req, res) => {
     try {
         const { data, error } = await supabase
             .from('movies')
-            .select('id, title, backdrop_path, poster_path, popularity')
+            .select('id, title, backdrop_path, popularity')
             .order('popularity', { ascending: false })
             .limit(5);
         
@@ -87,7 +70,7 @@ app.get('/api/movies/popular', async (req, res) => {
         
         const { data, error } = await supabase
             .from('movies')
-            .select('id, title, backdrop_path, poster_path, popularity')
+            .select('id, title, backdrop_path, popularity')
             .order('popularity', { ascending: false })
             .range(offset, offset + limit - 1);
         
@@ -95,6 +78,47 @@ app.get('/api/movies/popular', async (req, res) => {
         res.json({ success: true, data });
     } catch (error) {
         console.error('Error in /api/movies/popular:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Nueva API: Get popular movies by platforms
+app.get('/api/movies/popular-by-platforms', async (req, res) => {
+    try {
+        const { providers, limit = 10 } = req.query;
+        if (!providers) {
+            return res.status(400).json({ success: false, error: 'providers query param is required' });
+        }
+
+        // Parsear múltiples provider_id separados por coma
+        const providerIds = providers.split(',').map(id => id.trim());
+
+        // Obtener movie_id desde movie_streaming para los providers seleccionados
+        const { data: movieStreaming, error: msError } = await supabase
+            .from('movie_streaming')
+            .select('movie_id')
+            .in('provider_id', providerIds);
+
+        if (msError) throw msError;
+
+        const movieIds = movieStreaming.map(m => m.movie_id);
+        if (movieIds.length === 0) {
+            return res.json({ success: true, data: [] });
+        }
+
+        // Obtener detalles de las películas filtradas y ordenadas por popularidad
+        const { data: movies, error: moviesError } = await supabase
+            .from('movies')
+            .select('id, title, backdrop_path, popularity')
+            .in('id', movieIds)
+            .order('popularity', { ascending: false })
+            .limit(parseInt(limit));
+
+        if (moviesError) throw moviesError;
+
+        res.json({ success: true, data: movies });
+    } catch (error) {
+        console.error('Error in /api/movies/popular-by-platforms:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
@@ -120,7 +144,7 @@ app.get('/api/genres/:id/movies', async (req, res) => {
     try {
         const { data, error } = await supabase
             .from('movie_genres')
-            .select('movie_id, movies(id, title, backdrop_path, poster_path, popularity)')
+            .select('movie_id, movies(id, title, backdrop_path, popularity)')
             .eq('genre_id', req.params.id)
             .limit(20);
         
@@ -138,141 +162,28 @@ app.get('/api/genres/:id/movies', async (req, res) => {
     }
 });
 
-// Get movies by streaming provider
-app.get('/api/streaming-providers/:id/movies', async (req, res) => {
-    try {
-        const limit = parseInt(req.query.limit) || 20;
-        const type = req.query.type || 'flatrate'; // flatrate, rent, buy
-        
-        const { data, error } = await supabase
-            .from('movie_streaming')
-            .select(`
-                movie_id,
-                type,
-                movies (
-                    id,
-                    title,
-                    backdrop_path,
-                    poster_path,
-                    popularity,
-                    vote_average
-                )
-            `)
-            .eq('provider_id', req.params.id)
-            .eq('type', type)
-            .limit(limit);
-        
-        if (error) throw error;
-        
-        const movies = data
-            .map(item => item.movies)
-            .filter(movie => movie !== null)
-            .sort((a, b) => b.popularity - a.popularity);
-        
-        res.json({ success: true, data: movies });
-    } catch (error) {
-        console.error('Error in /api/streaming-providers/:id/movies:', error);
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-// Get movie detail by ID (with streaming providers)
+// Get movie detail by ID
 app.get('/api/movies/:id', async (req, res) => {
     try {
-        // Get movie details
-        const { data: movie, error: movieError } = await supabase
+        const { data, error } = await supabase
             .from('movies')
             .select('*')
             .eq('id', req.params.id)
             .single();
         
-        if (movieError) {
-            if (movieError.code === 'PGRST116') {
+        if (error) {
+            if (error.code === 'PGRST116') {
                 return res.status(404).json({ 
                     success: false, 
-                    error: 'PelÃ­cula no encontrada' 
+                    error: 'Película no encontrada' 
                 });
             }
-            throw movieError;
+            throw error;
         }
         
-        // Get streaming providers for this movie
-        const { data: streamingData, error: streamingError } = await supabase
-            .from('movie_streaming')
-            .select(`
-                type,
-                streaming_providers (
-                    id,
-                    name,
-                    logo_path
-                )
-            `)
-            .eq('movie_id', req.params.id);
-        
-        if (streamingError) throw streamingError;
-        
-        // Organize streaming data by type
-        const streaming = {
-            flatrate: [],
-            rent: [],
-            buy: []
-        };
-        
-        streamingData.forEach(item => {
-            if (item.streaming_providers) {
-                streaming[item.type].push(item.streaming_providers);
-            }
-        });
-        
-        // Add streaming info to movie object
-        movie.streaming_providers = streaming;
-        
-        res.json({ success: true, data: movie });
+        res.json({ success: true, data });
     } catch (error) {
         console.error('Error in /api/movies/:id:', error);
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-// Get streaming providers for a specific movie
-app.get('/api/movies/:id/streaming-providers', async (req, res) => {
-    try {
-        const { data, error } = await supabase
-            .from('movie_streaming')
-            .select(`
-                type,
-                streaming_providers (
-                    id,
-                    name,
-                    logo_path,
-                    display_priority
-                )
-            `)
-            .eq('movie_id', req.params.id);
-        
-        if (error) throw error;
-        
-        // Organize by type
-        const result = {
-            flatrate: [],
-            rent: [],
-            buy: []
-        };
-        
-        data.forEach(item => {
-            if (item.streaming_providers) {
-                result[item.type].push(item.streaming_providers);
-            }
-        });
-        
-        // Sort by display_priority
-        Object.keys(result).forEach(type => {
-            result[type].sort((a, b) => a.display_priority - b.display_priority);
-        });
-        
-        res.json({ success: true, data: result });
-    } catch (error) {
-        console.error('Error in /api/movies/:id/streaming-providers:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
@@ -296,7 +207,6 @@ app.get('/api/movies/:id/user-rating', async (req, res) => {
             .eq('user_id', userId)
             .single();
         
-        // If no rating exists, return null (not an error)
         if (error && error.code === 'PGRST116') {
             return res.json({ success: true, data: null });
         }
@@ -327,12 +237,11 @@ app.get('/api/movies/:id/friends-ratings', async (req, res) => {
                 )
             `)
             .eq('movie_id', req.params.id)
-            .neq('user_id', userId || 'no-user') // Exclude current user
-            .not('rating', 'is', null); // Only users who have rated
+            .neq('user_id', userId || 'no-user')
+            .not('rating', 'is', null);
         
         if (error) throw error;
         
-        // Transform data to flatten structure
         const friendsRatings = data
             .filter(item => item.users !== null)
             .map(item => ({
@@ -368,7 +277,6 @@ app.post('/api/movies/:id/rate', async (req, res) => {
             });
         }
         
-        // Upsert (insert or update)
         const { data, error } = await supabase
             .from('user_movie_ratings')
             .upsert({
@@ -409,14 +317,12 @@ app.post('/api/movies/:id/watched', async (req, res) => {
             updated_at: new Date().toISOString()
         };
         
-        // Add watched_date if marking as watched
         if (watched) {
             updateData.watched_date = new Date().toISOString();
         } else {
             updateData.watched_date = null;
         }
         
-        // Upsert
         const { data, error } = await supabase
             .from('user_movie_ratings')
             .upsert(updateData, {
