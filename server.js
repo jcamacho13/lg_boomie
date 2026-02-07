@@ -274,6 +274,164 @@ app.get('/api/movies/search', async (req, res) => {
 // ============================================
 
 // Get movie detail by ID
+
+// Get trending movies (últimos X meses con mayor popularidad)
+app.get('/api/movies/trending', async (req, res) => {
+    try {
+        const months = parseInt(req.query.months) || 6;
+        const limit = parseInt(req.query.limit) || 20;
+        const providers = req.query.providers;
+        
+        const dateThreshold = new Date();
+        dateThreshold.setMonth(dateThreshold.getMonth() - months);
+        const dateString = dateThreshold.toISOString().split('T')[0];
+        
+        let movieIds = null;
+        
+        // Si hay filtro de plataformas, obtener movie_ids primero
+        if (providers && providers !== 'all') {
+            const providerIds = providers.split(',').map(id => parseInt(id.trim()));
+            const { data: movieStreaming, error: msError } = await supabase
+                .from('movie_streaming')
+                .select('movie_id')
+                .in('provider_id', providerIds)
+                .is('removed_at', null);
+            
+            if (msError) throw msError;
+            movieIds = [...new Set(movieStreaming.map(m => m.movie_id))];
+            
+            if (movieIds.length === 0) {
+                return res.json({ success: true, data: [] });
+            }
+        }
+        
+        let query = supabase
+            .from('movies')
+            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, runtime, release_date')
+            .gte('release_date', dateString)
+            .order('popularity', { ascending: false })
+            .limit(limit);
+        
+        if (movieIds) {
+            query = query.in('id', movieIds);
+        }
+        
+        const { data, error } = await query;
+        
+        if (error) throw error;
+        res.json({ success: true, data });
+    } catch (error) {
+        console.error('Error in /api/movies/trending:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Get top rated movies by friends
+app.get('/api/movies/top-rated-by-friends', async (req, res) => {
+    try {
+        const userId = req.query.userId;
+        const limit = parseInt(req.query.limit) || 20;
+        const providers = req.query.providers;
+        
+        if (!userId) {
+            return res.status(400).json({ success: false, error: 'userId is required' });
+        }
+        
+        // Obtener valoraciones de otros usuarios (amigos)
+        const { data: ratings, error: ratingsError } = await supabase
+            .from('user_movie_ratings')
+            .select(`
+                movie_id,
+                rating,
+                user_id,
+                users (
+                    id,
+                    name,
+                    avatar_url
+                )
+            `)
+            .neq('user_id', userId)
+            .not('rating', 'is', null)
+            .order('rating', { ascending: false });
+        
+        if (ratingsError) throw ratingsError;
+        
+        if (ratings.length === 0) {
+            return res.json({ success: true, data: [] });
+        }
+        
+        // Agrupar por película y calcular rating promedio
+        const movieRatings = {};
+        ratings.forEach(r => {
+            if (!movieRatings[r.movie_id]) {
+                movieRatings[r.movie_id] = {
+                    movie_id: r.movie_id,
+                    ratings: [],
+                    top_friend: r.users
+                };
+            }
+            movieRatings[r.movie_id].ratings.push(r.rating);
+        });
+        
+        // Calcular promedios y ordenar
+        const sortedMovies = Object.values(movieRatings)
+            .map(m => ({
+                movie_id: m.movie_id,
+                avg_rating: m.ratings.reduce((a, b) => a + b, 0) / m.ratings.length,
+                friend_name: m.top_friend?.name
+            }))
+            .sort((a, b) => b.avg_rating - a.avg_rating)
+            .slice(0, limit * 2);
+        
+        const movieIds = sortedMovies.map(m => m.movie_id);
+        
+        // Obtener detalles de películas
+        let moviesQuery = supabase
+            .from('movies')
+            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, runtime, release_date')
+            .in('id', movieIds);
+        
+        // Filtrar por plataformas si es necesario
+        if (providers && providers !== 'all') {
+            const providerIds = providers.split(',').map(id => parseInt(id.trim()));
+            const { data: movieStreaming, error: msError } = await supabase
+                .from('movie_streaming')
+                .select('movie_id')
+                .in('provider_id', providerIds)
+                .in('movie_id', movieIds)
+                .is('removed_at', null);
+            
+            if (msError) throw msError;
+            const filteredIds = [...new Set(movieStreaming.map(m => m.movie_id))];
+            
+            if (filteredIds.length === 0) {
+                return res.json({ success: true, data: [] });
+            }
+            
+            moviesQuery = moviesQuery.in('id', filteredIds);
+        }
+        
+        const { data: movies, error: moviesError } = await moviesQuery;
+        
+        if (moviesError) throw moviesError;
+        
+        // Combinar con ratings de amigos
+        const moviesWithRatings = movies.map(movie => {
+            const ratingInfo = sortedMovies.find(m => m.movie_id === movie.id);
+            return {
+                ...movie,
+                friend_rating: ratingInfo?.avg_rating,
+                friend_name: ratingInfo?.friend_name
+            };
+        }).sort((a, b) => b.friend_rating - a.friend_rating).slice(0, limit);
+        
+        res.json({ success: true, data: moviesWithRatings });
+    } catch (error) {
+        console.error('Error in /api/movies/top-rated-by-friends:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 app.get('/api/movies/:id', async (req, res) => {
     try {
         const { data, error } = await supabase
@@ -514,6 +672,163 @@ app.get('/api/series/search', async (req, res) => {
         res.json({ success: true, data, query: q, pagination: { limit: parseInt(limit), offset: parseInt(offset), count: data.length } });
     } catch (error) {
         console.error('Error in /api/series/search:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Get trending series (últimos X meses con mayor popularidad)
+app.get('/api/series/trending', async (req, res) => {
+    try {
+        const months = parseInt(req.query.months) || 3;
+        const limit = parseInt(req.query.limit) || 20;
+        const providers = req.query.providers;
+        
+        const dateThreshold = new Date();
+        dateThreshold.setMonth(dateThreshold.getMonth() - months);
+        const dateString = dateThreshold.toISOString().split('T')[0];
+        
+        let seriesIds = null;
+        
+        // Si hay filtro de plataformas, obtener series_ids primero
+        if (providers && providers !== 'all') {
+            const providerIds = providers.split(',').map(id => parseInt(id.trim()));
+            const { data: seriesStreaming, error: ssError } = await supabase
+                .from('series_streaming')
+                .select('series_id')
+                .in('provider_id', providerIds)
+                .is('removed_at', null);
+            
+            if (ssError) throw ssError;
+            seriesIds = [...new Set(seriesStreaming.map(s => s.series_id))];
+            
+            if (seriesIds.length === 0) {
+                return res.json({ success: true, data: [] });
+            }
+        }
+        
+        let query = supabase
+            .from('series')
+            .select('id, title, name, backdrop_path, poster_path, popularity, vote_average, overview, last_air_date')
+            .gte('last_air_date', dateString)
+            .order('popularity', { ascending: false })
+            .limit(limit);
+        
+        if (seriesIds) {
+            query = query.in('id', seriesIds);
+        }
+        
+        const { data, error } = await query;
+        
+        if (error) throw error;
+        res.json({ success: true, data });
+    } catch (error) {
+        console.error('Error in /api/series/trending:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Get top rated series by friends
+app.get('/api/series/top-rated-by-friends', async (req, res) => {
+    try {
+        const userId = req.query.userId;
+        const limit = parseInt(req.query.limit) || 20;
+        const providers = req.query.providers;
+        
+        if (!userId) {
+            return res.status(400).json({ success: false, error: 'userId is required' });
+        }
+        
+        // Obtener valoraciones de otros usuarios (amigos)
+        const { data: ratings, error: ratingsError } = await supabase
+            .from('user_series_ratings')
+            .select(`
+                series_id,
+                rating,
+                user_id,
+                users (
+                    id,
+                    name,
+                    avatar_url
+                )
+            `)
+            .neq('user_id', userId)
+            .not('rating', 'is', null)
+            .order('rating', { ascending: false });
+        
+        if (ratingsError) throw ratingsError;
+        
+        if (ratings.length === 0) {
+            return res.json({ success: true, data: [] });
+        }
+        
+        // Agrupar por serie y calcular rating promedio
+        const seriesRatings = {};
+        ratings.forEach(r => {
+            if (!seriesRatings[r.series_id]) {
+                seriesRatings[r.series_id] = {
+                    series_id: r.series_id,
+                    ratings: [],
+                    top_friend: r.users
+                };
+            }
+            seriesRatings[r.series_id].ratings.push(r.rating);
+        });
+        
+        // Calcular promedios y ordenar
+        const sortedSeries = Object.values(seriesRatings)
+            .map(s => ({
+                series_id: s.series_id,
+                avg_rating: s.ratings.reduce((a, b) => a + b, 0) / s.ratings.length,
+                friend_name: s.top_friend?.name
+            }))
+            .sort((a, b) => b.avg_rating - a.avg_rating)
+            .slice(0, limit * 2);
+        
+        const seriesIds = sortedSeries.map(s => s.series_id);
+        
+        // Obtener detalles de series
+        let seriesQuery = supabase
+            .from('series')
+            .select('id, title, name, backdrop_path, poster_path, popularity, vote_average, overview, last_air_date')
+            .in('id', seriesIds);
+        
+        // Filtrar por plataformas si es necesario
+        if (providers && providers !== 'all') {
+            const providerIds = providers.split(',').map(id => parseInt(id.trim()));
+            const { data: seriesStreaming, error: ssError } = await supabase
+                .from('series_streaming')
+                .select('series_id')
+                .in('provider_id', providerIds)
+                .in('series_id', seriesIds)
+                .is('removed_at', null);
+            
+            if (ssError) throw ssError;
+            const filteredIds = [...new Set(seriesStreaming.map(s => s.series_id))];
+            
+            if (filteredIds.length === 0) {
+                return res.json({ success: true, data: [] });
+            }
+            
+            seriesQuery = seriesQuery.in('id', filteredIds);
+        }
+        
+        const { data: series, error: seriesError } = await seriesQuery;
+        
+        if (seriesError) throw seriesError;
+        
+        // Combinar con ratings de amigos
+        const seriesWithRatings = series.map(s => {
+            const ratingInfo = sortedSeries.find(sr => sr.series_id === s.id);
+            return {
+                ...s,
+                friend_rating: ratingInfo?.avg_rating,
+                friend_name: ratingInfo?.friend_name
+            };
+        }).sort((a, b) => b.friend_rating - a.friend_rating).slice(0, limit);
+        
+        res.json({ success: true, data: seriesWithRatings });
+    } catch (error) {
+        console.error('Error in /api/series/top-rated-by-friends:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
@@ -902,320 +1217,6 @@ app.post('/api/movies/:id/watched', async (req, res) => {
 // ============================================
 // NEW ENDPOINTS FOR HOME PAGE
 // ============================================
-
-// Get trending movies (últimos X meses con mayor popularidad)
-app.get('/api/movies/trending', async (req, res) => {
-    try {
-        const months = parseInt(req.query.months) || 6;
-        const limit = parseInt(req.query.limit) || 20;
-        const providers = req.query.providers;
-        
-        const dateThreshold = new Date();
-        dateThreshold.setMonth(dateThreshold.getMonth() - months);
-        const dateString = dateThreshold.toISOString().split('T')[0];
-        
-        let movieIds = null;
-        
-        // Si hay filtro de plataformas, obtener movie_ids primero
-        if (providers && providers !== 'all') {
-            const providerIds = providers.split(',').map(id => parseInt(id.trim()));
-            const { data: movieStreaming, error: msError } = await supabase
-                .from('movie_streaming')
-                .select('movie_id')
-                .in('provider_id', providerIds)
-                .is('removed_at', null);
-            
-            if (msError) throw msError;
-            movieIds = [...new Set(movieStreaming.map(m => m.movie_id))];
-            
-            if (movieIds.length === 0) {
-                return res.json({ success: true, data: [] });
-            }
-        }
-        
-        let query = supabase
-            .from('movies')
-            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, runtime, release_date')
-            .gte('release_date', dateString)
-            .order('popularity', { ascending: false })
-            .limit(limit);
-        
-        if (movieIds) {
-            query = query.in('id', movieIds);
-        }
-        
-        const { data, error } = await query;
-        
-        if (error) throw error;
-        res.json({ success: true, data });
-    } catch (error) {
-        console.error('Error in /api/movies/trending:', error);
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-// Get trending series (últimos X meses con mayor popularidad)
-app.get('/api/series/trending', async (req, res) => {
-    try {
-        const months = parseInt(req.query.months) || 3;
-        const limit = parseInt(req.query.limit) || 20;
-        const providers = req.query.providers;
-        
-        const dateThreshold = new Date();
-        dateThreshold.setMonth(dateThreshold.getMonth() - months);
-        const dateString = dateThreshold.toISOString().split('T')[0];
-        
-        let seriesIds = null;
-        
-        // Si hay filtro de plataformas, obtener series_ids primero
-        if (providers && providers !== 'all') {
-            const providerIds = providers.split(',').map(id => parseInt(id.trim()));
-            const { data: seriesStreaming, error: ssError } = await supabase
-                .from('series_streaming')
-                .select('series_id')
-                .in('provider_id', providerIds)
-                .is('removed_at', null);
-            
-            if (ssError) throw ssError;
-            seriesIds = [...new Set(seriesStreaming.map(s => s.series_id))];
-            
-            if (seriesIds.length === 0) {
-                return res.json({ success: true, data: [] });
-            }
-        }
-        
-        let query = supabase
-            .from('series')
-            .select('id, title, name, backdrop_path, poster_path, popularity, vote_average, overview, last_air_date')
-            .gte('last_air_date', dateString)
-            .order('popularity', { ascending: false })
-            .limit(limit);
-        
-        if (seriesIds) {
-            query = query.in('id', seriesIds);
-        }
-        
-        const { data, error } = await query;
-        
-        if (error) throw error;
-        res.json({ success: true, data });
-    } catch (error) {
-        console.error('Error in /api/series/trending:', error);
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-// Get top rated movies by friends
-app.get('/api/movies/top-rated-by-friends', async (req, res) => {
-    try {
-        const userId = req.query.userId;
-        const limit = parseInt(req.query.limit) || 20;
-        const providers = req.query.providers;
-        
-        if (!userId) {
-            return res.status(400).json({ success: false, error: 'userId is required' });
-        }
-        
-        // Obtener valoraciones de otros usuarios (amigos)
-        const { data: ratings, error: ratingsError } = await supabase
-            .from('user_movie_ratings')
-            .select(`
-                movie_id,
-                rating,
-                user_id,
-                users (
-                    id,
-                    name,
-                    avatar_url
-                )
-            `)
-            .neq('user_id', userId)
-            .not('rating', 'is', null)
-            .order('rating', { ascending: false });
-        
-        if (ratingsError) throw ratingsError;
-        
-        if (ratings.length === 0) {
-            return res.json({ success: true, data: [] });
-        }
-        
-        // Agrupar por película y calcular rating promedio
-        const movieRatings = {};
-        ratings.forEach(r => {
-            if (!movieRatings[r.movie_id]) {
-                movieRatings[r.movie_id] = {
-                    movie_id: r.movie_id,
-                    ratings: [],
-                    top_friend: r.users
-                };
-            }
-            movieRatings[r.movie_id].ratings.push(r.rating);
-        });
-        
-        // Calcular promedios y ordenar
-        const sortedMovies = Object.values(movieRatings)
-            .map(m => ({
-                movie_id: m.movie_id,
-                avg_rating: m.ratings.reduce((a, b) => a + b, 0) / m.ratings.length,
-                friend_name: m.top_friend?.name
-            }))
-            .sort((a, b) => b.avg_rating - a.avg_rating)
-            .slice(0, limit * 2); // Obtener más para poder filtrar luego
-        
-        const movieIds = sortedMovies.map(m => m.movie_id);
-        
-        // Obtener detalles de películas
-        let moviesQuery = supabase
-            .from('movies')
-            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, runtime, release_date')
-            .in('id', movieIds);
-        
-        // Filtrar por plataformas si es necesario
-        if (providers && providers !== 'all') {
-            const providerIds = providers.split(',').map(id => parseInt(id.trim()));
-            const { data: movieStreaming, error: msError } = await supabase
-                .from('movie_streaming')
-                .select('movie_id')
-                .in('provider_id', providerIds)
-                .in('movie_id', movieIds)
-                .is('removed_at', null);
-            
-            if (msError) throw msError;
-            const filteredIds = [...new Set(movieStreaming.map(m => m.movie_id))];
-            
-            if (filteredIds.length === 0) {
-                return res.json({ success: true, data: [] });
-            }
-            
-            moviesQuery = moviesQuery.in('id', filteredIds);
-        }
-        
-        const { data: movies, error: moviesError } = await moviesQuery;
-        
-        if (moviesError) throw moviesError;
-        
-        // Combinar con ratings de amigos
-        const moviesWithRatings = movies.map(movie => {
-            const ratingInfo = sortedMovies.find(m => m.movie_id === movie.id);
-            return {
-                ...movie,
-                friend_rating: ratingInfo?.avg_rating,
-                friend_name: ratingInfo?.friend_name
-            };
-        }).sort((a, b) => b.friend_rating - a.friend_rating).slice(0, limit);
-        
-        res.json({ success: true, data: moviesWithRatings });
-    } catch (error) {
-        console.error('Error in /api/movies/top-rated-by-friends:', error);
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-// Get top rated series by friends
-app.get('/api/series/top-rated-by-friends', async (req, res) => {
-    try {
-        const userId = req.query.userId;
-        const limit = parseInt(req.query.limit) || 20;
-        const providers = req.query.providers;
-        
-        if (!userId) {
-            return res.status(400).json({ success: false, error: 'userId is required' });
-        }
-        
-        // Obtener valoraciones de otros usuarios (amigos)
-        const { data: ratings, error: ratingsError } = await supabase
-            .from('user_series_ratings')
-            .select(`
-                series_id,
-                rating,
-                user_id,
-                users (
-                    id,
-                    name,
-                    avatar_url
-                )
-            `)
-            .neq('user_id', userId)
-            .not('rating', 'is', null)
-            .order('rating', { ascending: false });
-        
-        if (ratingsError) throw ratingsError;
-        
-        if (ratings.length === 0) {
-            return res.json({ success: true, data: [] });
-        }
-        
-        // Agrupar por serie y calcular rating promedio
-        const seriesRatings = {};
-        ratings.forEach(r => {
-            if (!seriesRatings[r.series_id]) {
-                seriesRatings[r.series_id] = {
-                    series_id: r.series_id,
-                    ratings: [],
-                    top_friend: r.users
-                };
-            }
-            seriesRatings[r.series_id].ratings.push(r.rating);
-        });
-        
-        // Calcular promedios y ordenar
-        const sortedSeries = Object.values(seriesRatings)
-            .map(s => ({
-                series_id: s.series_id,
-                avg_rating: s.ratings.reduce((a, b) => a + b, 0) / s.ratings.length,
-                friend_name: s.top_friend?.name
-            }))
-            .sort((a, b) => b.avg_rating - a.avg_rating)
-            .slice(0, limit * 2);
-        
-        const seriesIds = sortedSeries.map(s => s.series_id);
-        
-        // Obtener detalles de series
-        let seriesQuery = supabase
-            .from('series')
-            .select('id, title, name, backdrop_path, poster_path, popularity, vote_average, overview, last_air_date')
-            .in('id', seriesIds);
-        
-        // Filtrar por plataformas si es necesario
-        if (providers && providers !== 'all') {
-            const providerIds = providers.split(',').map(id => parseInt(id.trim()));
-            const { data: seriesStreaming, error: ssError } = await supabase
-                .from('series_streaming')
-                .select('series_id')
-                .in('provider_id', providerIds)
-                .in('series_id', seriesIds)
-                .is('removed_at', null);
-            
-            if (ssError) throw ssError;
-            const filteredIds = [...new Set(seriesStreaming.map(s => s.series_id))];
-            
-            if (filteredIds.length === 0) {
-                return res.json({ success: true, data: [] });
-            }
-            
-            seriesQuery = seriesQuery.in('id', filteredIds);
-        }
-        
-        const { data: series, error: seriesError } = await seriesQuery;
-        
-        if (seriesError) throw seriesError;
-        
-        // Combinar con ratings de amigos
-        const seriesWithRatings = series.map(s => {
-            const ratingInfo = sortedSeries.find(sr => sr.series_id === s.id);
-            return {
-                ...s,
-                friend_rating: ratingInfo?.avg_rating,
-                friend_name: ratingInfo?.friend_name
-            };
-        }).sort((a, b) => b.friend_rating - a.friend_rating).slice(0, limit);
-        
-        res.json({ success: true, data: seriesWithRatings });
-    } catch (error) {
-        console.error('Error in /api/series/top-rated-by-friends:', error);
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
 
 // Get recently watched by friends (mixed movies and series)
 app.get('/api/recently-watched-by-friends', async (req, res) => {
