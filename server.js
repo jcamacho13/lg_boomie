@@ -1406,4 +1406,3 @@ app.listen(PORT, () => {
     console.log('  Favorites: GET/POST/DELETE /api/favorites');
     console.log('  Platform: /api/movies/by-platform, /api/series/by-platform');
 });
-
