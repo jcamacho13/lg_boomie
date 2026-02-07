@@ -197,7 +197,39 @@ app.get('/api/movies/:id', async (req, res) => {
             throw error;
         }
         
-        res.json({ success: true, data });
+        // Obtener streaming providers para esta película
+        const { data: streamingData, error: streamingError } = await supabase
+            .from('movie_streaming')
+            .select(`
+                provider_id,
+                streaming_providers (
+                    id,
+                    name,
+                    logo_path
+                )
+            `)
+            .eq('movie_id', req.params.id);
+        
+        if (streamingError) {
+            console.error('Error fetching streaming providers:', streamingError);
+        }
+        
+        // Formatear los providers al estilo de TMDB
+        const providers = {
+            flatrate: streamingData 
+                ? streamingData
+                    .filter(item => item.streaming_providers !== null)
+                    .map(item => item.streaming_providers)
+                : []
+        };
+        
+        // Agregar providers al objeto de película
+        const movieWithProviders = {
+            ...data,
+            streaming_providers: providers
+        };
+        
+        res.json({ success: true, data: movieWithProviders });
     } catch (error) {
         console.error('Error in /api/movies/:id:', error);
         res.status(500).json({ success: false, error: error.message });
