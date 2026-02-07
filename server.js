@@ -40,101 +40,27 @@ app.use((req, res, next) => {
     next();
 });
 
+// ============================================
+// HEALTH & METADATA
+// ============================================
+
 // Health check
 app.get('/api/health', (req, res) => {
     res.json({ success: true, message: 'OK', timestamp: new Date().toISOString() });
 });
 
-// *** NUEVA API: Get streaming providers ***
+// Get streaming providers
 app.get('/api/streaming-providers', async (req, res) => {
     try {
         const { data, error } = await supabase
             .from('streaming_providers')
-            .select('id, name, logo_path')
-            .order('name', { ascending: true });
+            .select('id, name, logo_path, display_priority')
+            .order('display_priority', { ascending: true });
         
         if (error) throw error;
         res.json({ success: true, data });
     } catch (error) {
         console.error('Error in /api/streaming-providers:', error);
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-// Get recommendations
-app.get('/api/movies/recommendations', async (req, res) => {
-    try {
-        const { data, error } = await supabase
-            .from('movies')
-            .select('id, title, backdrop_path, popularity')
-            .order('popularity', { ascending: false })
-            .limit(5);
-        
-        if (error) throw error;
-        res.json({ success: true, data });
-    } catch (error) {
-        console.error('Error in /api/movies/recommendations:', error);
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-// Get popular movies
-app.get('/api/movies/popular', async (req, res) => {
-    try {
-        const limit = parseInt(req.query.limit) || 10;
-        const offset = parseInt(req.query.offset) || 5;
-        
-        const { data, error } = await supabase
-            .from('movies')
-            .select('id, title, backdrop_path, popularity, vote_average, poster_path')
-            .order('popularity', { ascending: false })
-            .range(offset, offset + limit - 1);
-        
-        if (error) throw error;
-        res.json({ success: true, data });
-    } catch (error) {
-        console.error('Error in /api/movies/popular:', error);
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-// Nueva API: Get popular movies by platforms
-app.get('/api/movies/popular-by-platforms', async (req, res) => {
-    try {
-        const { providers, limit = 10 } = req.query;
-        if (!providers) {
-            return res.status(400).json({ success: false, error: 'providers query param is required' });
-        }
-
-        // Parsear múltiples provider_id separados por coma
-        const providerIds = providers.split(',').map(id => id.trim());
-
-        // Obtener movie_id desde movie_streaming para los providers seleccionados
-        const { data: movieStreaming, error: msError } = await supabase
-            .from('movie_streaming')
-            .select('movie_id')
-            .in('provider_id', providerIds);
-
-        if (msError) throw msError;
-
-        const movieIds = movieStreaming.map(m => m.movie_id);
-        if (movieIds.length === 0) {
-            return res.json({ success: true, data: [] });
-        }
-
-        // Obtener detalles de las películas filtradas y ordenadas por popularidad
-        const { data: movies, error: moviesError } = await supabase
-            .from('movies')
-            .select('id, title, backdrop_path, popularity, vote_average, poster_path')
-            .in('id', movieIds)
-            .order('popularity', { ascending: false })
-            .limit(parseInt(limit));
-
-        if (moviesError) throw moviesError;
-
-        res.json({ success: true, data: movies });
-    } catch (error) {
-        console.error('Error in /api/movies/popular-by-platforms:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
@@ -155,28 +81,197 @@ app.get('/api/genres', async (req, res) => {
     }
 });
 
-// Get movies by genre
-app.get('/api/genres/:id/movies', async (req, res) => {
+// ============================================
+// MOVIES - DISCOVERY & LISTING
+// ============================================
+
+// Get recommendations (top 5 más populares)
+app.get('/api/movies/recommendations', async (req, res) => {
     try {
         const { data, error } = await supabase
-            .from('movie_genres')
-            .select('movie_id, movies(id, title, backdrop_path, popularity)')
-            .eq('genre_id', req.params.id)
-            .limit(20);
+            .from('movies')
+            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, runtime')
+            .order('popularity', { ascending: false })
+            .limit(5);
         
         if (error) throw error;
-        
-        const movies = data
-            .map(item => item.movies)
-            .filter(movie => movie !== null)
-            .sort((a, b) => b.popularity - a.popularity);
-        
-        res.json({ success: true, data: movies });
+        res.json({ success: true, data });
     } catch (error) {
-        console.error('Error in /api/genres/:id/movies:', error);
+        console.error('Error in /api/movies/recommendations:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
+
+// Get popular movies (con paginación)
+app.get('/api/movies/popular', async (req, res) => {
+    try {
+        const limit = parseInt(req.query.limit) || 20;
+        const offset = parseInt(req.query.offset) || 0;
+        
+        const { data, error } = await supabase
+            .from('movies')
+            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, runtime, release_date')
+            .order('popularity', { ascending: false })
+            .range(offset, offset + limit - 1);
+        
+        if (error) throw error;
+        res.json({ success: true, data, pagination: { limit, offset, count: data.length } });
+    } catch (error) {
+        console.error('Error in /api/movies/popular:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Get recent movies (ordenadas por fecha de estreno)
+app.get('/api/movies/recent', async (req, res) => {
+    try {
+        const limit = parseInt(req.query.limit) || 20;
+        const offset = parseInt(req.query.offset) || 0;
+        
+        const { data, error } = await supabase
+            .from('movies')
+            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, runtime, release_date')
+            .not('release_date', 'is', null)
+            .order('release_date', { ascending: false })
+            .range(offset, offset + limit - 1);
+        
+        if (error) throw error;
+        res.json({ success: true, data, pagination: { limit, offset, count: data.length } });
+    } catch (error) {
+        console.error('Error in /api/movies/recent:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Get top rated movies
+app.get('/api/movies/top-rated', async (req, res) => {
+    try {
+        const limit = parseInt(req.query.limit) || 20;
+        const offset = parseInt(req.query.offset) || 0;
+        
+        const { data, error } = await supabase
+            .from('movies')
+            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, runtime, release_date')
+            .not('vote_average', 'is', null)
+            .gte('vote_average', 7.0) // Solo películas con rating >= 7
+            .order('vote_average', { ascending: false })
+            .range(offset, offset + limit - 1);
+        
+        if (error) throw error;
+        res.json({ success: true, data, pagination: { limit, offset, count: data.length } });
+    } catch (error) {
+        console.error('Error in /api/movies/top-rated:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Get movies by streaming platform(s)
+app.get('/api/movies/by-platform', async (req, res) => {
+    try {
+        const { providers, limit = 20, offset = 0 } = req.query;
+        
+        if (!providers) {
+            return res.status(400).json({ success: false, error: 'providers query param is required (comma-separated IDs)' });
+        }
+
+        const providerIds = providers.split(',').map(id => parseInt(id.trim()));
+
+        // Obtener movie_ids de las plataformas seleccionadas (solo activas, no removidas)
+        const { data: movieStreaming, error: msError } = await supabase
+            .from('movie_streaming')
+            .select('movie_id')
+            .in('provider_id', providerIds)
+            .is('removed_at', null);
+
+        if (msError) throw msError;
+
+        const movieIds = [...new Set(movieStreaming.map(m => m.movie_id))]; // Eliminar duplicados
+        
+        if (movieIds.length === 0) {
+            return res.json({ success: true, data: [], pagination: { limit: parseInt(limit), offset: parseInt(offset), count: 0 } });
+        }
+
+        // Obtener detalles de las películas
+        const { data: movies, error: moviesError } = await supabase
+            .from('movies')
+            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, runtime, release_date')
+            .in('id', movieIds)
+            .order('popularity', { ascending: false })
+            .range(parseInt(offset), parseInt(offset) + parseInt(limit) - 1);
+
+        if (moviesError) throw moviesError;
+
+        res.json({ success: true, data: movies, pagination: { limit: parseInt(limit), offset: parseInt(offset), count: movies.length } });
+    } catch (error) {
+        console.error('Error in /api/movies/by-platform:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Get movies by genre
+app.get('/api/movies/by-genre/:genreId', async (req, res) => {
+    try {
+        const limit = parseInt(req.query.limit) || 20;
+        const offset = parseInt(req.query.offset) || 0;
+        
+        // Obtener movie_ids del género
+        const { data: movieGenres, error: mgError } = await supabase
+            .from('movie_genres')
+            .select('movie_id')
+            .eq('genre_id', req.params.genreId);
+        
+        if (mgError) throw mgError;
+        
+        const movieIds = movieGenres.map(mg => mg.movie_id);
+        
+        if (movieIds.length === 0) {
+            return res.json({ success: true, data: [], pagination: { limit, offset, count: 0 } });
+        }
+        
+        // Obtener detalles de las películas
+        const { data: movies, error: moviesError } = await supabase
+            .from('movies')
+            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, runtime, release_date')
+            .in('id', movieIds)
+            .order('popularity', { ascending: false })
+            .range(offset, offset + limit - 1);
+        
+        if (moviesError) throw moviesError;
+        
+        res.json({ success: true, data: movies, pagination: { limit, offset, count: movies.length } });
+    } catch (error) {
+        console.error('Error in /api/movies/by-genre:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Search movies
+app.get('/api/movies/search', async (req, res) => {
+    try {
+        const { q, limit = 20, offset = 0 } = req.query;
+        
+        if (!q || q.trim().length < 2) {
+            return res.status(400).json({ success: false, error: 'Search query must be at least 2 characters' });
+        }
+        
+        const { data, error } = await supabase
+            .from('movies')
+            .select('id, title, original_title, backdrop_path, poster_path, popularity, vote_average, overview, runtime, release_date')
+            .or(`title.ilike.%${q}%,original_title.ilike.%${q}%`)
+            .order('popularity', { ascending: false })
+            .range(parseInt(offset), parseInt(offset) + parseInt(limit) - 1);
+        
+        if (error) throw error;
+        res.json({ success: true, data, query: q, pagination: { limit: parseInt(limit), offset: parseInt(offset), count: data.length } });
+    } catch (error) {
+        console.error('Error in /api/movies/search:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// ============================================
+// MOVIES - DETAIL
+// ============================================
 
 // Get movie detail by ID
 app.get('/api/movies/:id', async (req, res) => {
@@ -197,44 +292,461 @@ app.get('/api/movies/:id', async (req, res) => {
             throw error;
         }
         
-        // Obtener streaming providers para esta película
-        const { data: streamingData, error: streamingError } = await supabase
-            .from('movie_streaming')
-            .select(`
-                provider_id,
-                streaming_providers (
-                    id,
-                    name,
-                    logo_path
-                )
-            `)
+        // Obtener géneros
+        const { data: genreData, error: genreError } = await supabase
+            .from('movie_genres')
+            .select('genre_id, genres(id, name)')
             .eq('movie_id', req.params.id);
         
-        if (streamingError) {
-            console.error('Error fetching streaming providers:', streamingError);
-        }
+        const genres = genreData 
+            ? genreData.filter(g => g.genres).map(g => g.genres)
+            : [];
         
-        // Formatear los providers al estilo de TMDB
+        // Obtener streaming providers (solo activos)
+        const { data: streamingData, error: streamingError } = await supabase
+            .from('movie_streaming')
+            .select('provider_id, type, streaming_providers(id, name, logo_path)')
+            .eq('movie_id', req.params.id)
+            .is('removed_at', null);
+        
         const providers = {
             flatrate: streamingData 
                 ? streamingData
-                    .filter(item => item.streaming_providers !== null)
+                    .filter(item => item.type === 'flatrate' && item.streaming_providers !== null)
                     .map(item => item.streaming_providers)
                 : []
         };
         
-        // Agregar providers al objeto de película
-        const movieWithProviders = {
+        const movieWithDetails = {
             ...data,
+            genres,
             streaming_providers: providers
         };
         
-        res.json({ success: true, data: movieWithProviders });
+        res.json({ success: true, data: movieWithDetails });
     } catch (error) {
         console.error('Error in /api/movies/:id:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
+
+// ============================================
+// SERIES - DISCOVERY & LISTING
+// ============================================
+
+// Get popular series
+app.get('/api/series/popular', async (req, res) => {
+    try {
+        const limit = parseInt(req.query.limit) || 20;
+        const offset = parseInt(req.query.offset) || 0;
+        
+        const { data, error } = await supabase
+            .from('series')
+            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, first_air_date, number_of_seasons, status')
+            .order('popularity', { ascending: false })
+            .range(offset, offset + limit - 1);
+        
+        if (error) throw error;
+        res.json({ success: true, data, pagination: { limit, offset, count: data.length } });
+    } catch (error) {
+        console.error('Error in /api/series/popular:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Get recent series
+app.get('/api/series/recent', async (req, res) => {
+    try {
+        const limit = parseInt(req.query.limit) || 20;
+        const offset = parseInt(req.query.offset) || 0;
+        
+        const { data, error } = await supabase
+            .from('series')
+            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, first_air_date, number_of_seasons, status')
+            .not('first_air_date', 'is', null)
+            .order('first_air_date', { ascending: false })
+            .range(offset, offset + limit - 1);
+        
+        if (error) throw error;
+        res.json({ success: true, data, pagination: { limit, offset, count: data.length } });
+    } catch (error) {
+        console.error('Error in /api/series/recent:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Get top rated series
+app.get('/api/series/top-rated', async (req, res) => {
+    try {
+        const limit = parseInt(req.query.limit) || 20;
+        const offset = parseInt(req.query.offset) || 0;
+        
+        const { data, error } = await supabase
+            .from('series')
+            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, first_air_date, number_of_seasons, status')
+            .not('vote_average', 'is', null)
+            .gte('vote_average', 7.0)
+            .order('vote_average', { ascending: false })
+            .range(offset, offset + limit - 1);
+        
+        if (error) throw error;
+        res.json({ success: true, data, pagination: { limit, offset, count: data.length } });
+    } catch (error) {
+        console.error('Error in /api/series/top-rated:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Get currently airing series (Returning Series)
+app.get('/api/series/on-air', async (req, res) => {
+    try {
+        const limit = parseInt(req.query.limit) || 20;
+        const offset = parseInt(req.query.offset) || 0;
+        
+        const { data, error } = await supabase
+            .from('series')
+            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, first_air_date, number_of_seasons, status')
+            .eq('status', 'Returning Series')
+            .order('popularity', { ascending: false })
+            .range(offset, offset + limit - 1);
+        
+        if (error) throw error;
+        res.json({ success: true, data, pagination: { limit, offset, count: data.length } });
+    } catch (error) {
+        console.error('Error in /api/series/on-air:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Get series by streaming platform(s)
+app.get('/api/series/by-platform', async (req, res) => {
+    try {
+        const { providers, limit = 20, offset = 0 } = req.query;
+        
+        if (!providers) {
+            return res.status(400).json({ success: false, error: 'providers query param is required (comma-separated IDs)' });
+        }
+
+        const providerIds = providers.split(',').map(id => parseInt(id.trim()));
+
+        const { data: seriesStreaming, error: ssError } = await supabase
+            .from('series_streaming')
+            .select('series_id')
+            .in('provider_id', providerIds)
+            .is('removed_at', null);
+
+        if (ssError) throw ssError;
+
+        const seriesIds = [...new Set(seriesStreaming.map(s => s.series_id))];
+        
+        if (seriesIds.length === 0) {
+            return res.json({ success: true, data: [], pagination: { limit: parseInt(limit), offset: parseInt(offset), count: 0 } });
+        }
+
+        const { data: series, error: seriesError } = await supabase
+            .from('series')
+            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, first_air_date, number_of_seasons, status')
+            .in('id', seriesIds)
+            .order('popularity', { ascending: false })
+            .range(parseInt(offset), parseInt(offset) + parseInt(limit) - 1);
+
+        if (seriesError) throw seriesError;
+
+        res.json({ success: true, data: series, pagination: { limit: parseInt(limit), offset: parseInt(offset), count: series.length } });
+    } catch (error) {
+        console.error('Error in /api/series/by-platform:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Get series by genre
+app.get('/api/series/by-genre/:genreId', async (req, res) => {
+    try {
+        const limit = parseInt(req.query.limit) || 20;
+        const offset = parseInt(req.query.offset) || 0;
+        
+        const { data: seriesGenres, error: sgError } = await supabase
+            .from('series_genres')
+            .select('series_id')
+            .eq('genre_id', req.params.genreId);
+        
+        if (sgError) throw sgError;
+        
+        const seriesIds = seriesGenres.map(sg => sg.series_id);
+        
+        if (seriesIds.length === 0) {
+            return res.json({ success: true, data: [], pagination: { limit, offset, count: 0 } });
+        }
+        
+        const { data: series, error: seriesError } = await supabase
+            .from('series')
+            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, first_air_date, number_of_seasons, status')
+            .in('id', seriesIds)
+            .order('popularity', { ascending: false })
+            .range(offset, offset + limit - 1);
+        
+        if (seriesError) throw seriesError;
+        
+        res.json({ success: true, data: series, pagination: { limit, offset, count: series.length } });
+    } catch (error) {
+        console.error('Error in /api/series/by-genre:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Search series
+app.get('/api/series/search', async (req, res) => {
+    try {
+        const { q, limit = 20, offset = 0 } = req.query;
+        
+        if (!q || q.trim().length < 2) {
+            return res.status(400).json({ success: false, error: 'Search query must be at least 2 characters' });
+        }
+        
+        const { data, error } = await supabase
+            .from('series')
+            .select('id, title, original_title, backdrop_path, poster_path, popularity, vote_average, overview, first_air_date, number_of_seasons, status')
+            .or(`title.ilike.%${q}%,original_title.ilike.%${q}%`)
+            .order('popularity', { ascending: false })
+            .range(parseInt(offset), parseInt(offset) + parseInt(limit) - 1);
+        
+        if (error) throw error;
+        res.json({ success: true, data, query: q, pagination: { limit: parseInt(limit), offset: parseInt(offset), count: data.length } });
+    } catch (error) {
+        console.error('Error in /api/series/search:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// ============================================
+// SERIES - DETAIL
+// ============================================
+
+// Get series detail by ID
+app.get('/api/series/:id', async (req, res) => {
+    try {
+        const { data, error } = await supabase
+            .from('series')
+            .select('*')
+            .eq('id', req.params.id)
+            .single();
+        
+        if (error) {
+            if (error.code === 'PGRST116') {
+                return res.status(404).json({ 
+                    success: false, 
+                    error: 'Serie no encontrada' 
+                });
+            }
+            throw error;
+        }
+        
+        // Obtener géneros
+        const { data: genreData, error: genreError } = await supabase
+            .from('series_genres')
+            .select('genre_id, genres(id, name)')
+            .eq('series_id', req.params.id);
+        
+        const genres = genreData 
+            ? genreData.filter(g => g.genres).map(g => g.genres)
+            : [];
+        
+        // Obtener streaming providers (solo activos)
+        const { data: streamingData, error: streamingError } = await supabase
+            .from('series_streaming')
+            .select('provider_id, type, streaming_providers(id, name, logo_path)')
+            .eq('series_id', req.params.id)
+            .is('removed_at', null);
+        
+        const providers = {
+            flatrate: streamingData 
+                ? streamingData
+                    .filter(item => item.type === 'flatrate' && item.streaming_providers !== null)
+                    .map(item => item.streaming_providers)
+                : []
+        };
+        
+        const seriesWithDetails = {
+            ...data,
+            genres,
+            streaming_providers: providers
+        };
+        
+        res.json({ success: true, data: seriesWithDetails });
+    } catch (error) {
+        console.error('Error in /api/series/:id:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// ============================================
+// FAVORITES
+// ============================================
+
+// Get user favorites (movies and series)
+app.get('/api/favorites', async (req, res) => {
+    try {
+        const { userId, contentType } = req.query;
+        
+        if (!userId) {
+            return res.status(400).json({ success: false, error: 'userId is required' });
+        }
+        
+        let query = supabase
+            .from('favorites')
+            .select('id, content_type, content_id, added_at')
+            .eq('user_id', userId)
+            .order('added_at', { ascending: false });
+        
+        if (contentType) {
+            query = query.eq('content_type', contentType);
+        }
+        
+        const { data: favorites, error } = await query;
+        
+        if (error) throw error;
+        
+        // Enriquecer con detalles de películas/series
+        const enrichedFavorites = await Promise.all(favorites.map(async (fav) => {
+            if (fav.content_type === 'movie') {
+                const { data: movie } = await supabase
+                    .from('movies')
+                    .select('id, title, poster_path, backdrop_path, vote_average, release_date')
+                    .eq('id', fav.content_id)
+                    .single();
+                
+                return { ...fav, content: movie };
+            } else if (fav.content_type === 'series') {
+                const { data: series } = await supabase
+                    .from('series')
+                    .select('id, title, poster_path, backdrop_path, vote_average, first_air_date')
+                    .eq('id', fav.content_id)
+                    .single();
+                
+                return { ...fav, content: series };
+            }
+            return fav;
+        }));
+        
+        res.json({ success: true, data: enrichedFavorites.filter(f => f.content !== null) });
+    } catch (error) {
+        console.error('Error in /api/favorites:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Add to favorites
+app.post('/api/favorites', async (req, res) => {
+    try {
+        const { userId, contentType, contentId } = req.body;
+        
+        if (!userId || !contentType || !contentId) {
+            return res.status(400).json({ 
+                success: false, 
+                error: 'userId, contentType, and contentId are required' 
+            });
+        }
+        
+        if (!['movie', 'series'].includes(contentType)) {
+            return res.status(400).json({ 
+                success: false, 
+                error: 'contentType must be "movie" or "series"' 
+            });
+        }
+        
+        const { data, error } = await supabase
+            .from('favorites')
+            .insert({
+                user_id: userId,
+                content_type: contentType,
+                content_id: contentId
+            })
+            .select()
+            .single();
+        
+        if (error) {
+            // Si ya existe, devolver el existente
+            if (error.code === '23505') { // Unique constraint violation
+                const { data: existing } = await supabase
+                    .from('favorites')
+                    .select('*')
+                    .eq('user_id', userId)
+                    .eq('content_type', contentType)
+                    .eq('content_id', contentId)
+                    .single();
+                
+                return res.json({ success: true, data: existing, message: 'Already in favorites' });
+            }
+            throw error;
+        }
+        
+        res.json({ success: true, data });
+    } catch (error) {
+        console.error('Error in POST /api/favorites:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Remove from favorites
+app.delete('/api/favorites', async (req, res) => {
+    try {
+        const { userId, contentType, contentId } = req.body;
+        
+        if (!userId || !contentType || !contentId) {
+            return res.status(400).json({ 
+                success: false, 
+                error: 'userId, contentType, and contentId are required' 
+            });
+        }
+        
+        const { error } = await supabase
+            .from('favorites')
+            .delete()
+            .eq('user_id', userId)
+            .eq('content_type', contentType)
+            .eq('content_id', contentId);
+        
+        if (error) throw error;
+        
+        res.json({ success: true, message: 'Removed from favorites' });
+    } catch (error) {
+        console.error('Error in DELETE /api/favorites:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Check if content is favorited
+app.get('/api/favorites/check', async (req, res) => {
+    try {
+        const { userId, contentType, contentId } = req.query;
+        
+        if (!userId || !contentType || !contentId) {
+            return res.status(400).json({ 
+                success: false, 
+                error: 'userId, contentType, and contentId are required' 
+            });
+        }
+        
+        const { data, error } = await supabase
+            .from('favorites')
+            .select('id')
+            .eq('user_id', userId)
+            .eq('content_type', contentType)
+            .eq('content_id', contentId)
+            .single();
+        
+        if (error && error.code !== 'PGRST116') throw error;
+        
+        res.json({ success: true, isFavorite: data !== null });
+    } catch (error) {
+        console.error('Error in /api/favorites/check:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// ============================================
+// USER RATINGS (mantener compatibilidad)
+// ============================================
 
 // Get user rating for a movie
 app.get('/api/movies/:id/user-rating', async (req, res) => {
@@ -387,6 +899,55 @@ app.post('/api/movies/:id/watched', async (req, res) => {
     }
 });
 
+// ============================================
+// MIXED CONTENT (Movies + Series)
+// ============================================
+
+// Search across movies and series
+app.get('/api/search', async (req, res) => {
+    try {
+        const { q, limit = 20 } = req.query;
+        
+        if (!q || q.trim().length < 2) {
+            return res.status(400).json({ success: false, error: 'Search query must be at least 2 characters' });
+        }
+        
+        // Buscar películas
+        const { data: movies, error: moviesError } = await supabase
+            .from('movies')
+            .select('id, title, poster_path, vote_average, release_date')
+            .or(`title.ilike.%${q}%,original_title.ilike.%${q}%`)
+            .order('popularity', { ascending: false })
+            .limit(parseInt(limit) / 2);
+        
+        // Buscar series
+        const { data: series, error: seriesError } = await supabase
+            .from('series')
+            .select('id, title, poster_path, vote_average, first_air_date')
+            .or(`title.ilike.%${q}%,original_title.ilike.%${q}%`)
+            .order('popularity', { ascending: false })
+            .limit(parseInt(limit) / 2);
+        
+        if (moviesError) throw moviesError;
+        if (seriesError) throw seriesError;
+        
+        const results = {
+            movies: movies || [],
+            series: series || [],
+            total: (movies?.length || 0) + (series?.length || 0)
+        };
+        
+        res.json({ success: true, data: results, query: q });
+    } catch (error) {
+        console.error('Error in /api/search:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// ============================================
+// ERROR HANDLERS
+// ============================================
+
 // 404 handler
 app.use((req, res) => {
     res.status(404).json({ 
@@ -409,4 +970,10 @@ app.use((err, req, res, next) => {
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
     console.log(`Health check: http://localhost:${PORT}/api/health`);
+    console.log('\n📚 Available endpoints:');
+    console.log('  Movies: /api/movies/popular, /api/movies/recent, /api/movies/top-rated');
+    console.log('  Series: /api/series/popular, /api/series/recent, /api/series/on-air');
+    console.log('  Search: /api/search, /api/movies/search, /api/series/search');
+    console.log('  Favorites: GET/POST/DELETE /api/favorites');
+    console.log('  Platform: /api/movies/by-platform, /api/series/by-platform');
 });
