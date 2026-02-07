@@ -45,6 +45,22 @@ app.get('/api/health', (req, res) => {
     res.json({ success: true, message: 'OK', timestamp: new Date().toISOString() });
 });
 
+// *** NUEVA API: Get streaming providers ***
+app.get('/api/streaming-providers', async (req, res) => {
+    try {
+        const { data, error } = await supabase
+            .from('streaming_providers')
+            .select('id, name, logo_path')
+            .order('name', { ascending: true });
+        
+        if (error) throw error;
+        res.json({ success: true, data });
+    } catch (error) {
+        console.error('Error in /api/streaming-providers:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 // Get recommendations
 app.get('/api/movies/recommendations', async (req, res) => {
     try {
@@ -70,7 +86,7 @@ app.get('/api/movies/popular', async (req, res) => {
         
         const { data, error } = await supabase
             .from('movies')
-            .select('id, title, backdrop_path, popularity')
+            .select('id, title, backdrop_path, popularity, vote_average, poster_path')
             .order('popularity', { ascending: false })
             .range(offset, offset + limit - 1);
         
@@ -109,7 +125,7 @@ app.get('/api/movies/popular-by-platforms', async (req, res) => {
         // Obtener detalles de las películas filtradas y ordenadas por popularidad
         const { data: movies, error: moviesError } = await supabase
             .from('movies')
-            .select('id, title, backdrop_path, popularity')
+            .select('id, title, backdrop_path, popularity, vote_average, poster_path')
             .in('id', movieIds)
             .order('popularity', { ascending: false })
             .limit(parseInt(limit));
