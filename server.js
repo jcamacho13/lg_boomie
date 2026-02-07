@@ -708,7 +708,7 @@ app.get('/api/series/trending', async (req, res) => {
         
         let query = supabase
             .from('series')
-            .select('id, title, name, backdrop_path, poster_path, popularity, vote_average, overview, last_air_date')
+            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, last_air_date')
             .gte('last_air_date', dateString)
             .order('popularity', { ascending: false })
             .limit(limit);
@@ -1406,3 +1406,4 @@ app.listen(PORT, () => {
     console.log('  Favorites: GET/POST/DELETE /api/favorites');
     console.log('  Platform: /api/movies/by-platform, /api/series/by-platform');
 });
+
