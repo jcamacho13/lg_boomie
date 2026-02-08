@@ -1094,6 +1094,37 @@ app.get('/api/movies/:id/user-rating', async (req, res) => {
     }
 });
 
+// Get user rating for a serie
+app.get('/api/series/:id/user-rating', async (req, res) => {
+    try {
+        const userId = req.query.userId;
+        
+        if (!userId) {
+            return res.status(400).json({ 
+                success: false, 
+                error: 'userId is required' 
+            });
+        }
+
+        const { data, error } = await supabase
+            .from('user_series_ratings')
+            .select('*')
+            .eq('series_id', req.params.id)
+            .eq('user_id', userId)
+            .single();
+        
+        if (error && error.code === 'PGRST116') {
+            return res.json({ success: true, data: null });
+        }
+        
+        if (error) throw error;
+        res.json({ success: true, data });
+    } catch (error) {
+        console.error('Error in /api/series/:id/user-rating:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 // Get friends ratings for a movie
 app.get('/api/movies/:id/friends-ratings', async (req, res) => {
     try {
@@ -1129,6 +1160,45 @@ app.get('/api/movies/:id/friends-ratings', async (req, res) => {
         res.json({ success: true, data: friendsRatings });
     } catch (error) {
         console.error('Error in /api/movies/:id/friends-ratings:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Get friends ratings for a series
+app.get('/api/series/:id/friends-ratings', async (req, res) => {
+    try {
+        const userId = req.query.userId;
+        
+        const { data, error } = await supabase
+            .from('user_series_ratings')
+            .select(`
+                rating,
+                watched,
+                user_id,
+                users (
+                    id,
+                    name,
+                    avatar_url
+                )
+            `)
+            .eq('series_id', req.params.id)
+            .neq('user_id', userId || 'no-user')
+            .not('rating', 'is', null);
+        
+        if (error) throw error;
+        
+        const friendsRatings = data
+            .filter(item => item.users !== null)
+            .map(item => ({
+                rating: item.rating,
+                watched: item.watched,
+                name: item.users.name,
+                avatar_url: item.users.avatar_url
+            }));
+        
+        res.json({ success: true, data: friendsRatings });
+    } catch (error) {
+        console.error('Error in /api/series/:id/friends-ratings:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
@@ -1173,6 +1243,46 @@ app.post('/api/movies/:id/rate', async (req, res) => {
     }
 });
 
+// Rate a serie
+app.post('/api/series/:id/rate', async (req, res) => {
+    try {
+        const { userId, rating } = req.body;
+        
+        if (!userId || !rating) {
+            return res.status(400).json({ 
+                success: false, 
+                error: 'userId and rating are required' 
+            });
+        }
+        
+        if (rating < 1 || rating > 10) {
+            return res.status(400).json({ 
+                success: false, 
+                error: 'Rating must be between 1 and 10' 
+            });
+        }
+        
+        const { data, error } = await supabase
+            .from('user_series_ratings')
+            .upsert({
+                user_id: userId,
+                series_id: parseInt(req.params.id),
+                rating: rating,
+                updated_at: new Date().toISOString()
+            }, {
+                onConflict: 'user_id,series_id'
+            })
+            .select()
+            .single();
+        
+        if (error) throw error;
+        res.json({ success: true, data });
+    } catch (error) {
+        console.error('Error in /api/series/:id/rate:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 // Mark movie as watched/unwatched
 app.post('/api/movies/:id/watched', async (req, res) => {
     try {
@@ -1210,6 +1320,47 @@ app.post('/api/movies/:id/watched', async (req, res) => {
         res.json({ success: true, data });
     } catch (error) {
         console.error('Error in /api/movies/:id/watched:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Mark serie as watched/unwatched
+app.post('/api/series/:id/watched', async (req, res) => {
+    try {
+        const { userId, watched } = req.body;
+        
+        if (!userId || watched === undefined) {
+            return res.status(400).json({ 
+                success: false, 
+                error: 'userId and watched are required' 
+            });
+        }
+        
+        const updateData = {
+            user_id: userId,
+            series_id: parseInt(req.params.id),
+            watched: watched,
+            updated_at: new Date().toISOString()
+        };
+        
+        if (watched) {
+            updateData.watched_date = new Date().toISOString();
+        } else {
+            updateData.watched_date = null;
+        }
+        
+        const { data, error } = await supabase
+            .from('user_series_ratings')
+            .upsert(updateData, {
+                onConflict: 'user_id,series_id'
+            })
+            .select()
+            .single();
+        
+        if (error) throw error;
+        res.json({ success: true, data });
+    } catch (error) {
+        console.error('Error in /api/series/:id/watched:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
