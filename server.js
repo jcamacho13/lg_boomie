@@ -755,7 +755,7 @@ app.get('/api/series/search', async (req, res) => {
 
         let seriesQuery = supabase
             .from('series')
-            .select('id, title, original_title, name, backdrop_path, poster_path, popularity, vote_average, overview, first_air_date, number_of_seasons, status')
+            .select('id, title, original_title, backdrop_path, poster_path, popularity, vote_average, overview, first_air_date, number_of_seasons, status')
             .order('popularity', { ascending: false })
             .limit(fetchLimit);
 
@@ -767,7 +767,7 @@ app.get('/api/series/search', async (req, res) => {
         if (error) throw error;
 
         const filtered = (data || []).filter(series =>
-            matchesNormalizedQuery(series, normalizedQuery, ['title', 'original_title', 'name'])
+            matchesNormalizedQuery(series, normalizedQuery, ['title', 'original_title'])
         );
 
         const paged = filtered.slice(parsedOffset, parsedOffset + parsedLimit);
@@ -891,7 +891,7 @@ app.get('/api/series/top-rated-by-friends', async (req, res) => {
         // Obtener detalles de series
         let seriesQuery = supabase
             .from('series')
-            .select('id, title, name, backdrop_path, poster_path, popularity, vote_average, overview, last_air_date')
+            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, last_air_date')
             .in('id', seriesIds);
         
         // Filtrar por plataformas si es necesario
@@ -1553,7 +1553,7 @@ app.get('/api/recently-watched-by-friends', async (req, res) => {
         if (seriesIds.length > 0) {
             const { data, error } = await supabase
                 .from('series')
-                .select('id, title, name, backdrop_path, poster_path, vote_average')
+                .select('id, title, backdrop_path, poster_path, vote_average')
                 .in('id', seriesIds);
             
             if (error) throw error;
