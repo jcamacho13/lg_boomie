@@ -127,12 +127,23 @@ app.get('/api/movies/popular', async (req, res) => {
     try {
         const limit = parseInt(req.query.limit) || 20;
         const offset = parseInt(req.query.offset) || 0;
-        
-        const { data, error } = await supabase
+        const parsedYearFrom = parseInt(req.query.yearFrom);
+        const parsedYearTo = parseInt(req.query.yearTo);
+
+        let query = supabase
             .from('movies')
             .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, runtime, release_date')
             .order('popularity', { ascending: false })
             .range(offset, offset + limit - 1);
+
+        if (Number.isInteger(parsedYearFrom)) {
+            query = query.gte('release_date', String(parsedYearFrom) + '-01-01');
+        }
+        if (Number.isInteger(parsedYearTo)) {
+            query = query.lte('release_date', String(parsedYearTo) + '-12-31');
+        }
+
+        const { data, error } = await query;
         
         if (error) throw error;
         res.json({ success: true, data, pagination: { limit, offset, count: data.length } });
@@ -279,7 +290,7 @@ app.get('/api/movies/by-genre/:genreId', async (req, res) => {
 // Search movies
 app.get('/api/movies/search', async (req, res) => {
     try {
-        const { q, limit = 20, offset = 0, providers } = req.query;
+        const { q, limit = 20, offset = 0, providers, yearFrom, yearTo } = req.query;
 
         const queryText = (q || '').trim();
         if (queryText.length < 2) {
@@ -288,6 +299,8 @@ app.get('/api/movies/search', async (req, res) => {
 
         const parsedLimit = parseInt(limit) || 20;
         const parsedOffset = parseInt(offset) || 0;
+        const parsedYearFrom = parseInt(yearFrom);
+        const parsedYearTo = parseInt(yearTo);
         const normalizedQuery = normalizeSearchText(queryText);
         const fetchLimit = Math.min(2000, Math.max(500, (parsedOffset + parsedLimit) * 10));
 
@@ -324,6 +337,12 @@ app.get('/api/movies/search', async (req, res) => {
 
         if (movieIds) {
             moviesQuery = moviesQuery.in('id', movieIds);
+        }
+        if (Number.isInteger(parsedYearFrom)) {
+            moviesQuery = moviesQuery.gte('release_date', String(parsedYearFrom) + '-01-01');
+        }
+        if (Number.isInteger(parsedYearTo)) {
+            moviesQuery = moviesQuery.lte('release_date', String(parsedYearTo) + '-12-31');
         }
 
         const { data, error } = await moviesQuery;
@@ -569,12 +588,23 @@ app.get('/api/series/popular', async (req, res) => {
     try {
         const limit = parseInt(req.query.limit) || 20;
         const offset = parseInt(req.query.offset) || 0;
-        
-        const { data, error } = await supabase
+        const parsedYearFrom = parseInt(req.query.yearFrom);
+        const parsedYearTo = parseInt(req.query.yearTo);
+
+        let query = supabase
             .from('series')
             .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, first_air_date, number_of_seasons, status')
             .order('popularity', { ascending: false })
             .range(offset, offset + limit - 1);
+
+        if (Number.isInteger(parsedYearFrom)) {
+            query = query.gte('first_air_date', String(parsedYearFrom) + '-01-01');
+        }
+        if (Number.isInteger(parsedYearTo)) {
+            query = query.lte('first_air_date', String(parsedYearTo) + '-12-31');
+        }
+
+        const { data, error } = await query;
         
         if (error) throw error;
         res.json({ success: true, data, pagination: { limit, offset, count: data.length } });
@@ -739,7 +769,7 @@ app.get('/api/series/by-genre/:genreId', async (req, res) => {
 // Search series
 app.get('/api/series/search', async (req, res) => {
     try {
-        const { q, limit = 20, offset = 0, providers } = req.query;
+        const { q, limit = 20, offset = 0, providers, yearFrom, yearTo } = req.query;
 
         const queryText = (q || '').trim();
         if (queryText.length < 2) {
@@ -748,6 +778,8 @@ app.get('/api/series/search', async (req, res) => {
 
         const parsedLimit = parseInt(limit) || 20;
         const parsedOffset = parseInt(offset) || 0;
+        const parsedYearFrom = parseInt(yearFrom);
+        const parsedYearTo = parseInt(yearTo);
         const normalizedQuery = normalizeSearchText(queryText);
         const fetchLimit = Math.min(2000, Math.max(500, (parsedOffset + parsedLimit) * 10));
 
@@ -784,6 +816,12 @@ app.get('/api/series/search', async (req, res) => {
 
         if (seriesIds) {
             seriesQuery = seriesQuery.in('id', seriesIds);
+        }
+        if (Number.isInteger(parsedYearFrom)) {
+            seriesQuery = seriesQuery.gte('first_air_date', String(parsedYearFrom) + '-01-01');
+        }
+        if (Number.isInteger(parsedYearTo)) {
+            seriesQuery = seriesQuery.lte('first_air_date', String(parsedYearTo) + '-12-31');
         }
 
         const { data, error } = await seriesQuery;
