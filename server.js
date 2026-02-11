@@ -40,6 +40,26 @@ app.use((req, res, next) => {
     next();
 });
 
+function normalizeSearchText(value) {
+    if (!value) return '';
+    return String(value)
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .trim();
+}
+
+function matchesNormalizedQuery(item, normalizedQuery, fields) {
+    if (!normalizedQuery) return true;
+    for (const field of fields) {
+        const normalizedField = normalizeSearchText(item[field]);
+        if (normalizedField.includes(normalizedQuery)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // ============================================
 // HEALTH & METADATA
 // ============================================
@@ -248,21 +268,62 @@ app.get('/api/movies/by-genre/:genreId', async (req, res) => {
 // Search movies
 app.get('/api/movies/search', async (req, res) => {
     try {
-        const { q, limit = 20, offset = 0 } = req.query;
-        
-        if (!q || q.trim().length < 2) {
+        const { q, limit = 20, offset = 0, providers } = req.query;
+
+        const queryText = (q || '').trim();
+        if (queryText.length < 2) {
             return res.status(400).json({ success: false, error: 'Search query must be at least 2 characters' });
         }
-        
-        const { data, error } = await supabase
+
+        const parsedLimit = parseInt(limit) || 20;
+        const parsedOffset = parseInt(offset) || 0;
+        const normalizedQuery = normalizeSearchText(queryText);
+        const fetchLimit = Math.min(2000, Math.max(500, (parsedOffset + parsedLimit) * 10));
+
+        let movieIds = null;
+        if (providers && providers !== 'all') {
+            const providerIds = providers
+                .split(',')
+                .map(id => parseInt(id.trim()))
+                .filter(Number.isFinite);
+
+            if (providerIds.length === 0) {
+                return res.json({ success: true, data: [], query: queryText, pagination: { limit: parsedLimit, offset: parsedOffset, count: 0 } });
+            }
+
+            const { data: movieStreaming, error: msError } = await supabase
+                .from('movie_streaming')
+                .select('movie_id')
+                .in('provider_id', providerIds)
+                .is('removed_at', null);
+
+            if (msError) throw msError;
+
+            movieIds = [...new Set((movieStreaming || []).map(m => m.movie_id))];
+            if (movieIds.length === 0) {
+                return res.json({ success: true, data: [], query: queryText, pagination: { limit: parsedLimit, offset: parsedOffset, count: 0 } });
+            }
+        }
+
+        let moviesQuery = supabase
             .from('movies')
             .select('id, title, original_title, backdrop_path, poster_path, popularity, vote_average, overview, runtime, release_date')
-            .or(`title.ilike.%${q}%,original_title.ilike.%${q}%`)
             .order('popularity', { ascending: false })
-            .range(parseInt(offset), parseInt(offset) + parseInt(limit) - 1);
-        
+            .limit(fetchLimit);
+
+        if (movieIds) {
+            moviesQuery = moviesQuery.in('id', movieIds);
+        }
+
+        const { data, error } = await moviesQuery;
         if (error) throw error;
-        res.json({ success: true, data, query: q, pagination: { limit: parseInt(limit), offset: parseInt(offset), count: data.length } });
+
+        const filtered = (data || []).filter(movie =>
+            matchesNormalizedQuery(movie, normalizedQuery, ['title', 'original_title'])
+        );
+
+        const paged = filtered.slice(parsedOffset, parsedOffset + parsedLimit);
+        res.json({ success: true, data: paged, query: queryText, pagination: { limit: parsedLimit, offset: parsedOffset, count: paged.length } });
     } catch (error) {
         console.error('Error in /api/movies/search:', error);
         res.status(500).json({ success: false, error: error.message });
@@ -655,21 +716,62 @@ app.get('/api/series/by-genre/:genreId', async (req, res) => {
 // Search series
 app.get('/api/series/search', async (req, res) => {
     try {
-        const { q, limit = 20, offset = 0 } = req.query;
-        
-        if (!q || q.trim().length < 2) {
+        const { q, limit = 20, offset = 0, providers } = req.query;
+
+        const queryText = (q || '').trim();
+        if (queryText.length < 2) {
             return res.status(400).json({ success: false, error: 'Search query must be at least 2 characters' });
         }
-        
-        const { data, error } = await supabase
+
+        const parsedLimit = parseInt(limit) || 20;
+        const parsedOffset = parseInt(offset) || 0;
+        const normalizedQuery = normalizeSearchText(queryText);
+        const fetchLimit = Math.min(2000, Math.max(500, (parsedOffset + parsedLimit) * 10));
+
+        let seriesIds = null;
+        if (providers && providers !== 'all') {
+            const providerIds = providers
+                .split(',')
+                .map(id => parseInt(id.trim()))
+                .filter(Number.isFinite);
+
+            if (providerIds.length === 0) {
+                return res.json({ success: true, data: [], query: queryText, pagination: { limit: parsedLimit, offset: parsedOffset, count: 0 } });
+            }
+
+            const { data: seriesStreaming, error: ssError } = await supabase
+                .from('series_streaming')
+                .select('series_id')
+                .in('provider_id', providerIds)
+                .is('removed_at', null);
+
+            if (ssError) throw ssError;
+
+            seriesIds = [...new Set((seriesStreaming || []).map(s => s.series_id))];
+            if (seriesIds.length === 0) {
+                return res.json({ success: true, data: [], query: queryText, pagination: { limit: parsedLimit, offset: parsedOffset, count: 0 } });
+            }
+        }
+
+        let seriesQuery = supabase
             .from('series')
-            .select('id, title, original_title, backdrop_path, poster_path, popularity, vote_average, overview, first_air_date, number_of_seasons, status')
-            .or(`title.ilike.%${q}%,original_title.ilike.%${q}%`)
+            .select('id, title, original_title, name, backdrop_path, poster_path, popularity, vote_average, overview, first_air_date, number_of_seasons, status')
             .order('popularity', { ascending: false })
-            .range(parseInt(offset), parseInt(offset) + parseInt(limit) - 1);
-        
+            .limit(fetchLimit);
+
+        if (seriesIds) {
+            seriesQuery = seriesQuery.in('id', seriesIds);
+        }
+
+        const { data, error } = await seriesQuery;
         if (error) throw error;
-        res.json({ success: true, data, query: q, pagination: { limit: parseInt(limit), offset: parseInt(offset), count: data.length } });
+
+        const filtered = (data || []).filter(series =>
+            matchesNormalizedQuery(series, normalizedQuery, ['title', 'original_title', 'name'])
+        );
+
+        const paged = filtered.slice(parsedOffset, parsedOffset + parsedLimit);
+        res.json({ success: true, data: paged, query: queryText, pagination: { limit: parsedLimit, offset: parsedOffset, count: paged.length } });
     } catch (error) {
         console.error('Error in /api/series/search:', error);
         res.status(500).json({ success: false, error: error.message });
