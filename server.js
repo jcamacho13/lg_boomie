@@ -60,8 +60,8 @@ function matchesNormalizedQuery(item, normalizedQuery, fields) {
     return false;
 }
 
-const EXCLUDED_LANGUAGES = new Set(['ko', 'ja']);
-const EXCLUDED_COUNTRY_CODES = new Set(['kr', 'jp']);
+const EXCLUDED_LANGUAGES = new Set(['ko', 'ja', 'zh']);
+const EXCLUDED_COUNTRY_CODES = new Set(['kr', 'jp', 'mx', 'cn']);
 
 function normalizeCodeList(value) {
     if (!value) return [];
@@ -166,7 +166,7 @@ app.get('/api/movies/popular', async (req, res) => {
 
         let query = supabase
             .from('movies')
-            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, runtime, release_date, original_language')
+            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, runtime, release_date, primary_country_code')
             .order('popularity', { ascending: false })
             .range(offset, offset + limit - 1);
 
@@ -262,7 +262,7 @@ app.get('/api/movies/by-platform', async (req, res) => {
 
         let moviesQuery = supabase
             .from('movies')
-            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, runtime, release_date, original_language')
+            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, runtime, release_date, primary_country_code')
             .in('id', movieIds)
             .order('popularity', { ascending: false });
 
@@ -367,7 +367,7 @@ app.get('/api/movies/search', async (req, res) => {
 
         let moviesQuery = supabase
             .from('movies')
-            .select('id, title, original_title, backdrop_path, poster_path, popularity, vote_average, overview, runtime, release_date, original_language')
+            .select('id, title, original_title, backdrop_path, poster_path, popularity, vote_average, overview, runtime, release_date, primary_country_code')
             .order('popularity', { ascending: false })
             .limit(fetchLimit);
 
@@ -434,7 +434,7 @@ app.get('/api/movies/trending', async (req, res) => {
         
         let query = supabase
             .from('movies')
-            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, runtime, release_date, original_language')
+            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, runtime, release_date, primary_country_code')
             .gte('release_date', dateString)
             .order('popularity', { ascending: false })
             .limit(limit);
@@ -515,7 +515,7 @@ app.get('/api/movies/top-rated-by-friends', async (req, res) => {
         // Obtener detalles de pelÃ­culas
         let moviesQuery = supabase
             .from('movies')
-            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, runtime, release_date, original_language')
+            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, runtime, release_date, primary_country_code')
             .in('id', movieIds);
         
         // Filtrar por plataformas si es necesario
@@ -629,7 +629,7 @@ app.get('/api/series/popular', async (req, res) => {
 
         let query = supabase
             .from('series')
-            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, first_air_date, number_of_seasons, status, original_language, primary_country_code')
+            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, first_air_date, number_of_seasons, status, primary_country_code')
             .order('popularity', { ascending: false })
             .range(offset, offset + limit - 1);
 
@@ -745,7 +745,7 @@ app.get('/api/series/by-platform', async (req, res) => {
 
         let seriesQuery = supabase
             .from('series')
-            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, first_air_date, number_of_seasons, status, original_language, primary_country_code')
+            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, first_air_date, number_of_seasons, status, primary_country_code')
             .in('id', seriesIds)
             .order('popularity', { ascending: false });
 
@@ -848,7 +848,7 @@ app.get('/api/series/search', async (req, res) => {
 
         let seriesQuery = supabase
             .from('series')
-            .select('id, title, original_title, backdrop_path, poster_path, popularity, vote_average, overview, first_air_date, number_of_seasons, status, original_language, primary_country_code')
+            .select('id, title, original_title, backdrop_path, poster_path, popularity, vote_average, overview, first_air_date, number_of_seasons, status, primary_country_code')
             .order('popularity', { ascending: false })
             .limit(fetchLimit);
 
@@ -909,7 +909,7 @@ app.get('/api/series/trending', async (req, res) => {
         
         let query = supabase
             .from('series')
-            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, last_air_date, original_language, primary_country_code')
+            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, last_air_date, primary_country_code')
             .gte('last_air_date', dateString)
             .order('popularity', { ascending: false })
             .limit(limit);
@@ -990,7 +990,7 @@ app.get('/api/series/top-rated-by-friends', async (req, res) => {
         // Obtener detalles de series
         let seriesQuery = supabase
             .from('series')
-            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, last_air_date, original_language, primary_country_code')
+            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, last_air_date, primary_country_code')
             .in('id', seriesIds);
         
         // Filtrar por plataformas si es necesario
@@ -1640,7 +1640,7 @@ app.get('/api/recently-watched-by-friends', async (req, res) => {
         if (movieIds.length > 0) {
             const { data, error } = await supabase
                 .from('movies')
-                .select('id, title, backdrop_path, poster_path, vote_average, original_language')
+                .select('id, title, backdrop_path, poster_path, vote_average, primary_country_code')
                 .in('id', movieIds);
             
             if (error) throw error;
@@ -1652,7 +1652,7 @@ app.get('/api/recently-watched-by-friends', async (req, res) => {
         if (seriesIds.length > 0) {
             const { data, error } = await supabase
                 .from('series')
-                .select('id, title, backdrop_path, poster_path, vote_average, original_language, primary_country_code')
+                .select('id, title, backdrop_path, poster_path, vote_average, primary_country_code')
                 .in('id', seriesIds);
             
             if (error) throw error;
