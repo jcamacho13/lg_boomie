@@ -60,6 +60,40 @@ function matchesNormalizedQuery(item, normalizedQuery, fields) {
     return false;
 }
 
+const EXCLUDED_LANGUAGES = new Set(['ko', 'ja']);
+const EXCLUDED_COUNTRY_CODES = new Set(['kr', 'jp']);
+
+function normalizeCodeList(value) {
+    if (!value) return [];
+    if (Array.isArray(value)) {
+        return value.map(v => String(v).toLowerCase());
+    }
+    return [String(value).toLowerCase()];
+}
+
+function isExcludedByLocale(item) {
+    if (!item) return false;
+
+    const originalLanguage = String(item.original_language || '').toLowerCase();
+    if (EXCLUDED_LANGUAGES.has(originalLanguage)) {
+        return true;
+    }
+
+    const countryCodeFields = [item.primary_country_code, item.origin_country, item.original_country];
+    for (const countryValue of countryCodeFields) {
+        const codes = normalizeCodeList(countryValue);
+        if (codes.some(code => EXCLUDED_COUNTRY_CODES.has(code))) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function filterExcludedLocales(items) {
+    return (items || []).filter(item => !isExcludedByLocale(item));
+}
+
 // ============================================
 // HEALTH & METADATA
 // ============================================
@@ -132,7 +166,7 @@ app.get('/api/movies/popular', async (req, res) => {
 
         let query = supabase
             .from('movies')
-            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, runtime, release_date')
+            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, runtime, release_date, original_language')
             .order('popularity', { ascending: false })
             .range(offset, offset + limit - 1);
 
@@ -146,7 +180,8 @@ app.get('/api/movies/popular', async (req, res) => {
         const { data, error } = await query;
         
         if (error) throw error;
-        res.json({ success: true, data, pagination: { limit, offset, count: data.length } });
+        const filteredData = filterExcludedLocales(data);
+        res.json({ success: true, data: filteredData, pagination: { limit, offset, count: filteredData.length } });
     } catch (error) {
         console.error('Error in /api/movies/popular:', error);
         res.status(500).json({ success: false, error: error.message });
@@ -227,7 +262,7 @@ app.get('/api/movies/by-platform', async (req, res) => {
 
         let moviesQuery = supabase
             .from('movies')
-            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, runtime, release_date')
+            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, runtime, release_date, original_language')
             .in('id', movieIds)
             .order('popularity', { ascending: false });
 
@@ -243,7 +278,8 @@ app.get('/api/movies/by-platform', async (req, res) => {
 
         if (moviesError) throw moviesError;
 
-        res.json({ success: true, data: movies, pagination: { limit: parseInt(limit), offset: parseInt(offset), count: movies.length } });
+        const filteredMovies = filterExcludedLocales(movies);
+        res.json({ success: true, data: filteredMovies, pagination: { limit: parseInt(limit), offset: parseInt(offset), count: filteredMovies.length } });
     } catch (error) {
         console.error('Error in /api/movies/by-platform:', error);
         res.status(500).json({ success: false, error: error.message });
@@ -331,7 +367,7 @@ app.get('/api/movies/search', async (req, res) => {
 
         let moviesQuery = supabase
             .from('movies')
-            .select('id, title, original_title, backdrop_path, poster_path, popularity, vote_average, overview, runtime, release_date')
+            .select('id, title, original_title, backdrop_path, poster_path, popularity, vote_average, overview, runtime, release_date, original_language')
             .order('popularity', { ascending: false })
             .limit(fetchLimit);
 
@@ -348,7 +384,7 @@ app.get('/api/movies/search', async (req, res) => {
         const { data, error } = await moviesQuery;
         if (error) throw error;
 
-        const filtered = (data || []).filter(movie =>
+        const filtered = filterExcludedLocales(data).filter(movie =>
             matchesNormalizedQuery(movie, normalizedQuery, ['title', 'original_title'])
         );
 
@@ -398,7 +434,7 @@ app.get('/api/movies/trending', async (req, res) => {
         
         let query = supabase
             .from('movies')
-            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, runtime, release_date')
+            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, runtime, release_date, original_language')
             .gte('release_date', dateString)
             .order('popularity', { ascending: false })
             .limit(limit);
@@ -410,7 +446,7 @@ app.get('/api/movies/trending', async (req, res) => {
         const { data, error } = await query;
         
         if (error) throw error;
-        res.json({ success: true, data });
+        res.json({ success: true, data: filterExcludedLocales(data) });
     } catch (error) {
         console.error('Error in /api/movies/trending:', error);
         res.status(500).json({ success: false, error: error.message });
@@ -479,7 +515,7 @@ app.get('/api/movies/top-rated-by-friends', async (req, res) => {
         // Obtener detalles de pelÃ­culas
         let moviesQuery = supabase
             .from('movies')
-            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, runtime, release_date')
+            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, runtime, release_date, original_language')
             .in('id', movieIds);
         
         // Filtrar por plataformas si es necesario
@@ -507,7 +543,7 @@ app.get('/api/movies/top-rated-by-friends', async (req, res) => {
         if (moviesError) throw moviesError;
         
         // Combinar con ratings de amigos
-        const moviesWithRatings = movies.map(movie => {
+        const moviesWithRatings = filterExcludedLocales(movies).map(movie => {
             const ratingInfo = sortedMovies.find(m => m.movie_id === movie.id);
             return {
                 ...movie,
@@ -593,7 +629,7 @@ app.get('/api/series/popular', async (req, res) => {
 
         let query = supabase
             .from('series')
-            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, first_air_date, number_of_seasons, status')
+            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, first_air_date, number_of_seasons, status, original_language, primary_country_code')
             .order('popularity', { ascending: false })
             .range(offset, offset + limit - 1);
 
@@ -607,7 +643,8 @@ app.get('/api/series/popular', async (req, res) => {
         const { data, error } = await query;
         
         if (error) throw error;
-        res.json({ success: true, data, pagination: { limit, offset, count: data.length } });
+        const filteredData = filterExcludedLocales(data);
+        res.json({ success: true, data: filteredData, pagination: { limit, offset, count: filteredData.length } });
     } catch (error) {
         console.error('Error in /api/series/popular:', error);
         res.status(500).json({ success: false, error: error.message });
@@ -708,7 +745,7 @@ app.get('/api/series/by-platform', async (req, res) => {
 
         let seriesQuery = supabase
             .from('series')
-            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, first_air_date, number_of_seasons, status')
+            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, first_air_date, number_of_seasons, status, original_language, primary_country_code')
             .in('id', seriesIds)
             .order('popularity', { ascending: false });
 
@@ -724,7 +761,8 @@ app.get('/api/series/by-platform', async (req, res) => {
 
         if (seriesError) throw seriesError;
 
-        res.json({ success: true, data: series, pagination: { limit: parseInt(limit), offset: parseInt(offset), count: series.length } });
+        const filteredSeries = filterExcludedLocales(series);
+        res.json({ success: true, data: filteredSeries, pagination: { limit: parseInt(limit), offset: parseInt(offset), count: filteredSeries.length } });
     } catch (error) {
         console.error('Error in /api/series/by-platform:', error);
         res.status(500).json({ success: false, error: error.message });
@@ -810,7 +848,7 @@ app.get('/api/series/search', async (req, res) => {
 
         let seriesQuery = supabase
             .from('series')
-            .select('id, title, original_title, backdrop_path, poster_path, popularity, vote_average, overview, first_air_date, number_of_seasons, status')
+            .select('id, title, original_title, backdrop_path, poster_path, popularity, vote_average, overview, first_air_date, number_of_seasons, status, original_language, primary_country_code')
             .order('popularity', { ascending: false })
             .limit(fetchLimit);
 
@@ -827,7 +865,7 @@ app.get('/api/series/search', async (req, res) => {
         const { data, error } = await seriesQuery;
         if (error) throw error;
 
-        const filtered = (data || []).filter(series =>
+        const filtered = filterExcludedLocales(data).filter(series =>
             matchesNormalizedQuery(series, normalizedQuery, ['title', 'original_title'])
         );
 
@@ -871,7 +909,7 @@ app.get('/api/series/trending', async (req, res) => {
         
         let query = supabase
             .from('series')
-            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, last_air_date')
+            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, last_air_date, original_language, primary_country_code')
             .gte('last_air_date', dateString)
             .order('popularity', { ascending: false })
             .limit(limit);
@@ -883,7 +921,7 @@ app.get('/api/series/trending', async (req, res) => {
         const { data, error } = await query;
         
         if (error) throw error;
-        res.json({ success: true, data });
+        res.json({ success: true, data: filterExcludedLocales(data) });
     } catch (error) {
         console.error('Error in /api/series/trending:', error);
         res.status(500).json({ success: false, error: error.message });
@@ -952,7 +990,7 @@ app.get('/api/series/top-rated-by-friends', async (req, res) => {
         // Obtener detalles de series
         let seriesQuery = supabase
             .from('series')
-            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, last_air_date')
+            .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, last_air_date, original_language, primary_country_code')
             .in('id', seriesIds);
         
         // Filtrar por plataformas si es necesario
@@ -980,7 +1018,7 @@ app.get('/api/series/top-rated-by-friends', async (req, res) => {
         if (seriesError) throw seriesError;
         
         // Combinar con ratings de amigos
-        const seriesWithRatings = series.map(s => {
+        const seriesWithRatings = filterExcludedLocales(series).map(s => {
             const ratingInfo = sortedSeries.find(sr => sr.series_id === s.id);
             return {
                 ...s,
@@ -1602,11 +1640,11 @@ app.get('/api/recently-watched-by-friends', async (req, res) => {
         if (movieIds.length > 0) {
             const { data, error } = await supabase
                 .from('movies')
-                .select('id, title, backdrop_path, poster_path, vote_average')
+                .select('id, title, backdrop_path, poster_path, vote_average, original_language')
                 .in('id', movieIds);
             
             if (error) throw error;
-            movies = data || [];
+            movies = filterExcludedLocales(data);
         }
         
         // Obtener detalles de series
@@ -1614,11 +1652,11 @@ app.get('/api/recently-watched-by-friends', async (req, res) => {
         if (seriesIds.length > 0) {
             const { data, error } = await supabase
                 .from('series')
-                .select('id, title, backdrop_path, poster_path, vote_average')
+                .select('id, title, backdrop_path, poster_path, vote_average, original_language, primary_country_code')
                 .in('id', seriesIds);
             
             if (error) throw error;
-            series = data || [];
+            series = filterExcludedLocales(data);
         }
         
         // Combinar todo
