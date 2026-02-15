@@ -408,6 +408,7 @@ app.get('/api/movies/trending', async (req, res) => {
         const months = parseInt(req.query.months) || 6;
         const limit = parseInt(req.query.limit) || 20;
         const providers = req.query.providers;
+        const country = String(req.query.country || '').toLowerCase().trim();
         
         const dateThreshold = new Date();
         dateThreshold.setMonth(dateThreshold.getMonth() - months);
@@ -441,6 +442,9 @@ app.get('/api/movies/trending', async (req, res) => {
         
         if (movieIds) {
             query = query.in('id', movieIds);
+        }
+        if (country) {
+            query = query.ilike('primary_country_code', country);
         }
         
         const { data, error } = await query;
@@ -883,6 +887,7 @@ app.get('/api/series/trending', async (req, res) => {
         const months = parseInt(req.query.months) || 3;
         const limit = parseInt(req.query.limit) || 20;
         const providers = req.query.providers;
+        const country = String(req.query.country || '').toLowerCase().trim();
         
         const dateThreshold = new Date();
         dateThreshold.setMonth(dateThreshold.getMonth() - months);
@@ -916,6 +921,9 @@ app.get('/api/series/trending', async (req, res) => {
         
         if (seriesIds) {
             query = query.in('id', seriesIds);
+        }
+        if (country) {
+            query = query.ilike('primary_country_code', country);
         }
         
         const { data, error } = await query;
