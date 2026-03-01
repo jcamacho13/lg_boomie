@@ -94,6 +94,46 @@ function filterExcludedLocales(items) {
     return (items || []).filter(item => !isExcludedByLocale(item));
 }
 
+function parseAdvancedFilters(req, dateField, options = {}) {
+    const parsedYearFrom = parseInt(req.query.yearFrom);
+    const parsedYearTo = parseInt(req.query.yearTo);
+    const parsedMinRating = parseFloat(req.query.minRating);
+    const country = String(req.query.country || '').toLowerCase().trim();
+    const duration = String(req.query.duration || '').toLowerCase().trim();
+
+    return {
+        dateField,
+        yearFrom: Number.isInteger(parsedYearFrom) ? parsedYearFrom : null,
+        yearTo: Number.isInteger(parsedYearTo) ? parsedYearTo : null,
+        minRating: Number.isFinite(parsedMinRating) ? parsedMinRating : null,
+        country: country && country !== 'all' ? country : null,
+        duration: duration || 'all',
+        supportsDuration: Boolean(options.supportsDuration)
+    };
+}
+
+function applyAdvancedFiltersToQuery(query, filters) {
+    let nextQuery = query;
+
+    if (filters.yearFrom !== null) {
+        nextQuery = nextQuery.gte(filters.dateField, String(filters.yearFrom) + '-01-01');
+    }
+    if (filters.yearTo !== null) {
+        nextQuery = nextQuery.lte(filters.dateField, String(filters.yearTo) + '-12-31');
+    }
+    if (filters.minRating !== null) {
+        nextQuery = nextQuery.gte('vote_average', filters.minRating);
+    }
+    if (filters.country) {
+        nextQuery = nextQuery.ilike('primary_country_code', filters.country);
+    }
+    if (filters.supportsDuration && filters.duration === 'short') {
+        nextQuery = nextQuery.lt('runtime', 120);
+    }
+
+    return nextQuery;
+}
+
 // ============================================
 // HEALTH & METADATA
 // ============================================
@@ -161,21 +201,15 @@ app.get('/api/movies/popular', async (req, res) => {
     try {
         const limit = parseInt(req.query.limit) || 20;
         const offset = parseInt(req.query.offset) || 0;
-        const parsedYearFrom = parseInt(req.query.yearFrom);
-        const parsedYearTo = parseInt(req.query.yearTo);
+        const filters = parseAdvancedFilters(req, 'release_date', { supportsDuration: true });
 
         let query = supabase
             .from('movies')
             .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, runtime, release_date, primary_country_code')
-            .order('popularity', { ascending: false })
-            .range(offset, offset + limit - 1);
+            .order('popularity', { ascending: false });
 
-        if (Number.isInteger(parsedYearFrom)) {
-            query = query.gte('release_date', String(parsedYearFrom) + '-01-01');
-        }
-        if (Number.isInteger(parsedYearTo)) {
-            query = query.lte('release_date', String(parsedYearTo) + '-12-31');
-        }
+        query = applyAdvancedFiltersToQuery(query, filters);
+        query = query.range(offset, offset + limit - 1);
 
         const { data, error } = await query;
         
@@ -234,7 +268,7 @@ app.get('/api/movies/top-rated', async (req, res) => {
 // Get movies by streaming platform(s)
 app.get('/api/movies/by-platform', async (req, res) => {
     try {
-        const { providers, limit = 20, offset = 0, yearFrom, yearTo } = req.query;
+        const { providers, limit = 20, offset = 0 } = req.query;
 
         if (!providers) {
             return res.status(400).json({ success: false, error: 'providers query param is required (comma-separated IDs)' });
@@ -257,8 +291,7 @@ app.get('/api/movies/by-platform', async (req, res) => {
             return res.json({ success: true, data: [], pagination: { limit: parseInt(limit), offset: parseInt(offset), count: 0 } });
         }
 
-        const parsedYearFrom = parseInt(yearFrom);
-        const parsedYearTo = parseInt(yearTo);
+        const filters = parseAdvancedFilters(req, 'release_date', { supportsDuration: true });
 
         let moviesQuery = supabase
             .from('movies')
@@ -266,12 +299,7 @@ app.get('/api/movies/by-platform', async (req, res) => {
             .in('id', movieIds)
             .order('popularity', { ascending: false });
 
-        if (Number.isInteger(parsedYearFrom)) {
-            moviesQuery = moviesQuery.gte('release_date', String(parsedYearFrom) + '-01-01');
-        }
-        if (Number.isInteger(parsedYearTo)) {
-            moviesQuery = moviesQuery.lte('release_date', String(parsedYearTo) + '-12-31');
-        }
+        moviesQuery = applyAdvancedFiltersToQuery(moviesQuery, filters);
 
         const { data: movies, error: moviesError } = await moviesQuery
             .range(parseInt(offset), parseInt(offset) + parseInt(limit) - 1);
@@ -326,7 +354,7 @@ app.get('/api/movies/by-genre/:genreId', async (req, res) => {
 // Search movies
 app.get('/api/movies/search', async (req, res) => {
     try {
-        const { q, limit = 20, offset = 0, providers, yearFrom, yearTo } = req.query;
+        const { q, limit = 20, offset = 0, providers } = req.query;
 
         const queryText = (q || '').trim();
         if (queryText.length < 2) {
@@ -335,8 +363,7 @@ app.get('/api/movies/search', async (req, res) => {
 
         const parsedLimit = parseInt(limit) || 20;
         const parsedOffset = parseInt(offset) || 0;
-        const parsedYearFrom = parseInt(yearFrom);
-        const parsedYearTo = parseInt(yearTo);
+        const filters = parseAdvancedFilters(req, 'release_date', { supportsDuration: true });
         const normalizedQuery = normalizeSearchText(queryText);
         const fetchLimit = Math.min(2000, Math.max(500, (parsedOffset + parsedLimit) * 10));
 
@@ -374,12 +401,7 @@ app.get('/api/movies/search', async (req, res) => {
         if (movieIds) {
             moviesQuery = moviesQuery.in('id', movieIds);
         }
-        if (Number.isInteger(parsedYearFrom)) {
-            moviesQuery = moviesQuery.gte('release_date', String(parsedYearFrom) + '-01-01');
-        }
-        if (Number.isInteger(parsedYearTo)) {
-            moviesQuery = moviesQuery.lte('release_date', String(parsedYearTo) + '-12-31');
-        }
+        moviesQuery = applyAdvancedFiltersToQuery(moviesQuery, filters);
 
         const { data, error } = await moviesQuery;
         if (error) throw error;
@@ -628,21 +650,15 @@ app.get('/api/series/popular', async (req, res) => {
     try {
         const limit = parseInt(req.query.limit) || 20;
         const offset = parseInt(req.query.offset) || 0;
-        const parsedYearFrom = parseInt(req.query.yearFrom);
-        const parsedYearTo = parseInt(req.query.yearTo);
+        const filters = parseAdvancedFilters(req, 'first_air_date');
 
         let query = supabase
             .from('series')
             .select('id, title, backdrop_path, poster_path, popularity, vote_average, overview, first_air_date, number_of_seasons, status, primary_country_code')
-            .order('popularity', { ascending: false })
-            .range(offset, offset + limit - 1);
+            .order('popularity', { ascending: false });
 
-        if (Number.isInteger(parsedYearFrom)) {
-            query = query.gte('first_air_date', String(parsedYearFrom) + '-01-01');
-        }
-        if (Number.isInteger(parsedYearTo)) {
-            query = query.lte('first_air_date', String(parsedYearTo) + '-12-31');
-        }
+        query = applyAdvancedFiltersToQuery(query, filters);
+        query = query.range(offset, offset + limit - 1);
 
         const { data, error } = await query;
         
@@ -722,7 +738,7 @@ app.get('/api/series/on-air', async (req, res) => {
 // Get series by streaming platform(s)
 app.get('/api/series/by-platform', async (req, res) => {
     try {
-        const { providers, limit = 20, offset = 0, yearFrom, yearTo } = req.query;
+        const { providers, limit = 20, offset = 0 } = req.query;
 
         if (!providers) {
             return res.status(400).json({ success: false, error: 'providers query param is required (comma-separated IDs)' });
@@ -744,8 +760,7 @@ app.get('/api/series/by-platform', async (req, res) => {
             return res.json({ success: true, data: [], pagination: { limit: parseInt(limit), offset: parseInt(offset), count: 0 } });
         }
 
-        const parsedYearFrom = parseInt(yearFrom);
-        const parsedYearTo = parseInt(yearTo);
+        const filters = parseAdvancedFilters(req, 'first_air_date');
 
         let seriesQuery = supabase
             .from('series')
@@ -753,12 +768,7 @@ app.get('/api/series/by-platform', async (req, res) => {
             .in('id', seriesIds)
             .order('popularity', { ascending: false });
 
-        if (Number.isInteger(parsedYearFrom)) {
-            seriesQuery = seriesQuery.gte('first_air_date', String(parsedYearFrom) + '-01-01');
-        }
-        if (Number.isInteger(parsedYearTo)) {
-            seriesQuery = seriesQuery.lte('first_air_date', String(parsedYearTo) + '-12-31');
-        }
+        seriesQuery = applyAdvancedFiltersToQuery(seriesQuery, filters);
 
         const { data: series, error: seriesError } = await seriesQuery
             .range(parseInt(offset), parseInt(offset) + parseInt(limit) - 1);
@@ -811,7 +821,7 @@ app.get('/api/series/by-genre/:genreId', async (req, res) => {
 // Search series
 app.get('/api/series/search', async (req, res) => {
     try {
-        const { q, limit = 20, offset = 0, providers, yearFrom, yearTo } = req.query;
+        const { q, limit = 20, offset = 0, providers } = req.query;
 
         const queryText = (q || '').trim();
         if (queryText.length < 2) {
@@ -820,8 +830,7 @@ app.get('/api/series/search', async (req, res) => {
 
         const parsedLimit = parseInt(limit) || 20;
         const parsedOffset = parseInt(offset) || 0;
-        const parsedYearFrom = parseInt(yearFrom);
-        const parsedYearTo = parseInt(yearTo);
+        const filters = parseAdvancedFilters(req, 'first_air_date');
         const normalizedQuery = normalizeSearchText(queryText);
         const fetchLimit = Math.min(2000, Math.max(500, (parsedOffset + parsedLimit) * 10));
 
@@ -859,12 +868,7 @@ app.get('/api/series/search', async (req, res) => {
         if (seriesIds) {
             seriesQuery = seriesQuery.in('id', seriesIds);
         }
-        if (Number.isInteger(parsedYearFrom)) {
-            seriesQuery = seriesQuery.gte('first_air_date', String(parsedYearFrom) + '-01-01');
-        }
-        if (Number.isInteger(parsedYearTo)) {
-            seriesQuery = seriesQuery.lte('first_air_date', String(parsedYearTo) + '-12-31');
-        }
+        seriesQuery = applyAdvancedFiltersToQuery(seriesQuery, filters);
 
         const { data, error } = await seriesQuery;
         if (error) throw error;
